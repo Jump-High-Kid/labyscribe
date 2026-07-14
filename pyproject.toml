@@ -1,0 +1,13 @@
+[project]
+name = "labyscribe"
+version = "0.0.1"
+description = "Open-source local MCP share edition of a personal video-summary skill — Phase 0 extraction core."
+requires-python = ">=3.9"
+license = { text = "MIT" }
+
+[project.optional-dependencies]
+dev = ["pytest"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["."]
