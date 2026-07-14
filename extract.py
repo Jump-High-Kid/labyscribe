@@ -1,11 +1,11 @@
 #!/usr/bin/env python3
 """labyscribe extraction core — deterministic (no LLM). python3 stdlib only.
 
-Phase 0: yt-dlp track selection -> native subtitle capture (.vtt + a .json3
-sample) into <out>/raw/. No post-conversion tool required. Transcript parsing
-(parse_vtt) lands in Phase 1.
+yt-dlp track selection -> native .vtt capture -> transcript
+(parse_vtt: rolling dedup + tag strip + 10-min markers) into <out>/. A .json3
+sample is captured to raw/ for comparison only. No post-conversion tool required.
 
-Reference: README.md (Phase 0 scope).
+Reference: README.md.
 """
 import argparse
 import glob
@@ -22,13 +22,13 @@ from urllib.parse import urlparse
 _RETRYABLE = re.compile(r"429|Too Many Requests|Temporary failure|timed out|Connection",
                         re.IGNORECASE)
 
-# 종료 코드 체계 (Phase 0)
-EXIT_OK = 0               # transcript 산출 — Phase 1에서만
+# 종료 코드 체계
+EXIT_OK = 0               # transcript 산출 완료
 EXIT_NO_SUBTITLE = 2      # 자막 트랙 없음 / 다운로드 파일 없음
 EXIT_DOWNLOAD_FAILED = 3  # 429/네트워크 재시도 소진
 EXIT_UNAVAILABLE = 4      # 비공개/삭제/지역/연령 — 정보 수집 비재시도 실패
 EXIT_BAD_INPUT = 5        # validate_url 실패
-EXIT_NOT_IMPLEMENTED = 20 # Phase 0 sentinel — raw 확보됨·transcript는 Phase 1
+EXIT_EMPTY_TRANSCRIPT = 6 # 자막 트랙은 받았으나 정제 결과 무효(빈/과소)
 
 # ── 순수함수 (단위 테스트 대상) ────────────────────────────────
 
@@ -58,7 +58,7 @@ def _match_lang(track_dict, lang):
     if lang in track_dict:
         return lang
     for tag in track_dict:
-        if _norm(tag) == lang:
+        if _norm(tag) == _norm(lang):   # 요청언어도 정규화(en-US → en 트랙 매칭)
             return tag
     return None
 
@@ -115,16 +115,20 @@ def select_track(info, prefer_langs=None):
     for lang in (prefer_langs or []):          # ④ 선호 언어 자동자막(번역 가능)
         t = _match_lang(autos, lang)
         if t:
-            return (t, True, bool(orig) and lang != orig)
+            return (t, True, bool(orig) and _norm(lang) != orig)  # 요청언어 정규화
     return None
 
 
-_TS = re.compile(r"(\d{2}):(\d{2}):(\d{2})[,.](\d{3})")
+_TS = re.compile(r"(?:(\d+):)?(\d{2}):(\d{2})[,.](\d{3})")   # 시 optional(WebVTT MM:SS 허용)
 _TAG = re.compile(r"<[^>]+>")
+
+# 접두 dedup 시간가드(초): 이 간격 초과 접두 반복은 정상발화로 보존(과삭제 방지).
+# 근거 = 롤링 자동자막 큐 간격 실측(median 0.3s·95%ile ~5s) — 인접 큐에만 접두 적용.
+_ROLLING_GAP_SEC = 5.0
 
 
 def _to_sec(h, m, s, ms):
-    return int(h) * 3600 + int(m) * 60 + int(s) + int(ms) / 1000.0
+    return int(h or 0) * 3600 + int(m) * 60 + int(s) + int(ms) / 1000.0
 
 
 def _fmt_ts(sec):
@@ -189,9 +193,26 @@ def clean_srt(text, marker_interval=600):
     return "\n".join(lines)
 
 
-def quality_ok(text, min_chars=200):
-    """정제 후 최소 문자수 게이트. 미달 시 자막 무효 신호."""
+def quality_ok(text, min_chars=30):
+    """정제 후 최소 문자수 게이트 — 빈/노이즈 자막 감지(길이 검열 아님).
+
+    하한을 낮게(30) 둬 짧은 정상 영상도 통과시킨다. 태그 잔존 쓰레기는
+    parse_vtt strip 완전성이 별도 차단하므로 대상은 순수 텍스트.
+    """
     return len(text.strip()) >= min_chars
+
+
+# 대괄호-only 줄 = 10분 마커([00:10:00])·음향 이벤트([Music]·[Applause]).
+_BRACKET_ONLY_RE = re.compile(r"^\[[^\]]*\]$")
+
+
+def _speech_text(transcript):
+    """마커·음향 이벤트([Music] 등)를 뺀 실질 발화 텍스트 — quality 판정 대상.
+
+    순수 음악/박수만 있는 영상이 가짜 성공(silent-failure)하지 않게 한다.
+    """
+    return "\n".join(l for l in transcript.splitlines()
+                     if l.strip() and not _BRACKET_ONLY_RE.match(l.strip()))
 
 
 def safe_filename(title, max_len=100):
@@ -201,9 +222,72 @@ def safe_filename(title, max_len=100):
     return s[:max_len].strip()
 
 
-def parse_vtt(raw):
-    """WebVTT → transcript. Phase 1에서 구현(과삭제 방지 golden fixture 동반)."""
-    raise NotImplementedError("parse_vtt: Phase 1")
+def _parse_vtt_cues(raw):
+    """WebVTT → [(start, end, line)]. 큐 body 각 줄이 개별 항목.
+
+    `-->` 포함 첫 줄만 타임스탬프로 파싱(본문 시간표기 오인 방지) · start<=end 검증 ·
+    태그 strip · 빈 줄 제거. `-->` 없는 블록(WEBVTT 헤더·NOTE·STYLE)·손상 타이밍은 skip.
+    raise 안 함(손상 입력은 부분 복구).
+    """
+    cues = []
+    for block in re.split(r"\n\s*\n", raw.strip()):
+        lines = block.splitlines()
+        ts_idx = next((i for i, l in enumerate(lines) if "-->" in l), None)
+        if ts_idx is None:
+            continue                                # 헤더·NOTE·STYLE
+        stamps = _TS.findall(lines[ts_idx])
+        if len(stamps) < 2:
+            continue                                # 손상 타이밍
+        start, end = _to_sec(*stamps[0]), _to_sec(*stamps[1])
+        if end < start:
+            continue                                # start>end 손상
+        body = lines[ts_idx + 1:]
+        # 인라인 타이밍 태그(<00:..>) = 롤링 자동자막 → 줄별 항목(2줄창 dedup 위해).
+        # 없으면 정적 자막 → 큐 내 줄 병합(단어 래핑 복원).
+        if any(re.search(r"<\d\d:\d\d:\d\d", l) for l in body):
+            parts = [_strip_tags(l) for l in body]
+        else:
+            parts = [_strip_tags(" ".join(body))]
+        for t in parts:
+            if t:
+                cues.append((start, end, t))
+    return cues
+
+
+def _dedup_rolling(cues):
+    """롤링 중복 제거 → [(start, text)]. 인접 kept 마지막과만 비교(원거리 보존).
+
+    ① 정확중복 → skip ② 시간인접 + kept가 현재의 단어경계 접두 → 대체(성장)
+    ③ 시간인접 + 현재가 kept의 접두 → skip ④ else → append(충돌 시 보존 우선).
+    접두 규칙 ②③은 시간 인접(gap<=_ROLLING_GAP_SEC)에만 — 원거리 정상반복 보존.
+    """
+    kept = []  # [[start, end, text], ...]
+    for start, end, text in cues:
+        if kept:
+            p_start, p_end, prev = kept[-1]
+            # 시간 인접 = |gap| ≤ GAP. 겹침(작은 음수)은 롤링으로 허용,
+            # 큰 역행(원거리)은 배제. 원거리 정상반복 보존.
+            near = abs(start - p_end) <= _ROLLING_GAP_SEC
+            if near and text == prev:
+                continue                            # ① 정확중복(시간 인접만·원거리 후렴 보존)
+            if near and text.startswith(prev + " "):
+                kept[-1] = [p_start, end, text]     # ② 전방 성장(시작시각 유지)
+                continue
+            if near and prev.startswith(text + " "):
+                continue                            # ③ 역접두(더 긴 것 이미 있음)
+        kept.append([start, end, text])
+    return [(s, t) for s, _, t in kept]
+
+
+def parse_vtt(raw, marker_interval=600):
+    """WebVTT → 정제 transcript(롤링 dedup·태그 strip·10분 마커). 순수·raise 안 함."""
+    lines, next_marker = [], marker_interval
+    for start, text in _dedup_rolling(_parse_vtt_cues(raw)):
+        while start >= next_marker:
+            lines.append("[%s]" % _fmt_ts(next_marker))
+            next_marker += marker_interval
+        lines.append(text)
+    return "\n".join(lines)
 
 
 # ── 오케스트레이션 (subprocess — 단위테스트 밖, e2e 검증) ──────────
@@ -248,7 +332,7 @@ def _dump_meta(outdir, meta):
 
 
 def main(argv=None):
-    ap = argparse.ArgumentParser(description="유튜브 자막 추출 (Phase 0)")
+    ap = argparse.ArgumentParser(description="유튜브 자막 추출 → transcript")
     ap.add_argument("url")
     ap.add_argument("--lang", default=None,
                     help="자막 선호 언어(쉼표구분·원어 우선 후 폴백). 미지정 시 원본 언어 자동감지·우선")
@@ -326,18 +410,23 @@ def main(argv=None):
         shutil.copyfile(json3_path, raw_json3)
         meta["raw_json3"] = os.path.relpath(raw_json3, a.out)
 
-    meta["status"] = "raw-captured"
-    _dump_meta(a.out, meta)
-
-    # ── transcript 생성 = Phase 1. silent-failure 차단: 명시 신호로 종료 ──
-    # (clean_srt를 vtt에 호출하면 그럴듯한 오답이 나옴 → Phase 0은 미호출)
+    # ── transcript 생성 (Phase 1). silent-failure 차단 = quality_ok 게이트 ──
     raw = open(raw_vtt, encoding="utf-8", errors="replace").read()
-    try:
-        parse_vtt(raw)
-    except NotImplementedError:
-        print("RAW_CAPTURED raw/*.vtt 확보 완료(id=%s lang=%s). "
-              "TRANSCRIPT_NOT_IMPLEMENTED(Phase1)." % (vid, tag))
-        return EXIT_NOT_IMPLEMENTED
+    transcript = parse_vtt(raw)
+    if not quality_ok(_speech_text(transcript)):
+        meta["status"] = "empty-transcript"
+        _dump_meta(a.out, meta)
+        print("EMPTY_TRANSCRIPT 자막은 받았으나 정제 결과 무효(빈/과소). "
+              "id=%s lang=%s" % (vid, tag))
+        return EXIT_EMPTY_TRANSCRIPT
+
+    with open(os.path.join(a.out, "transcript.txt"), "w", encoding="utf-8") as f:
+        f.write(transcript)
+    meta["status"] = "ok"
+    meta["transcript"] = "transcript.txt"
+    _dump_meta(a.out, meta)              # 최종 status 확정 후 1회 dump
+    print("OK transcript 생성(id=%s lang=%s chars=%d)." % (vid, tag, len(transcript)))
+    return EXIT_OK
 
 
 if __name__ == "__main__":

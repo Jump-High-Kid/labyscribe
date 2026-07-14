@@ -91,27 +91,67 @@ def test_download_persistent_429_returns_3(monkeypatch, tmp_path):
     assert os.path.exists(os.path.join(out, "meta.json"))
 
 
-# ── AC-5: 정상경로 → parse_vtt 미구현 명시 신호(20) + raw/*.vtt 존재 ──
+# ── AC-5: 정상경로 → transcript.txt + exit 0 / 과소 → exit 6(silent 차단) ──
 
 def _fake_dl_ok(url, tag, outdir, vid, fmt="vtt", retries=3):
-    """vtt 는 성공(파일 생성), json3 best-effort 는 미확보 시뮬레이션."""
+    """vtt 성공(quality_ok 통과 자막), json3 best-effort 미확보 시뮬."""
     if fmt == "vtt":
         p = os.path.join(outdir, "%s.%s.vtt" % (vid, tag))
         with open(p, "w", encoding="utf-8") as f:
-            f.write("WEBVTT\n\n00:00:01.000 --> 00:00:03.000\nhello world\n")
+            f.write("WEBVTT\n\n00:00:01.000 --> 00:00:03.000\n"
+                    "this is a real transcript with plenty of words to pass quality\n")
         return p, "ok"
     return None, "no_file"
 
 
-def test_success_path_not_implemented_returns_20_and_raw_vtt(monkeypatch, tmp_path):
+def test_success_path_writes_transcript_returns_0(monkeypatch, tmp_path):
     code, out = _run_main(monkeypatch, tmp_path,
                           info=_info(subs={"en": [{}]}), dl=_fake_dl_ok)
-    assert code == E.EXIT_NOT_IMPLEMENTED
-    # raw/*.vtt 확보(silent-failure 아님·명시 sentinel)
+    assert code == E.EXIT_OK
     assert glob.glob(os.path.join(out, "raw", "*.vtt"))
-    # 가짜 산출 금지: transcript.txt 미생성 (CK-3)
+    tpath = os.path.join(out, "transcript.txt")
+    assert os.path.exists(tpath)
+    assert "real transcript" in open(tpath, encoding="utf-8").read()
+    assert os.path.exists(os.path.join(out, "meta.json"))
+
+
+def _fake_dl_empty(url, tag, outdir, vid, fmt="vtt", retries=3):
+    """vtt 는 받아지나 정제 결과가 과소(빈 transcript 시뮬)."""
+    if fmt == "vtt":
+        p = os.path.join(outdir, "%s.%s.vtt" % (vid, tag))
+        with open(p, "w", encoding="utf-8") as f:
+            f.write("WEBVTT\n\n00:00:01.000 --> 00:00:02.000\nhi\n")
+        return p, "ok"
+    return None, "no_file"
+
+
+def test_empty_transcript_returns_6_no_file(monkeypatch, tmp_path):
+    code, out = _run_main(monkeypatch, tmp_path,
+                          info=_info(subs={"en": [{}]}), dl=_fake_dl_empty)
+    assert code == E.EXIT_EMPTY_TRANSCRIPT
+    # silent-failure 차단: 과소 transcript 는 파일 안 씀
     assert not os.path.exists(os.path.join(out, "transcript.txt"))
     assert os.path.exists(os.path.join(out, "meta.json"))
+
+
+def _fake_dl_music(url, tag, outdir, vid, fmt="vtt", retries=3):
+    """음향 이벤트([Music]/[Applause])만 있는 영상 시뮬 — 실질 발화 0."""
+    if fmt == "vtt":
+        p = os.path.join(outdir, "%s.%s.vtt" % (vid, tag))
+        with open(p, "w", encoding="utf-8") as f:
+            f.write("WEBVTT\n\n00:00:01.000 --> 00:00:02.000\n[Music]\n\n"
+                    "00:02:00.000 --> 00:02:01.000\n[Applause]\n\n"
+                    "00:04:00.000 --> 00:04:01.000\n[Music]\n")
+        return p, "ok"
+    return None, "no_file"
+
+
+def test_music_only_returns_6(monkeypatch, tmp_path):
+    # 순수 음향 영상이 exit0 가짜 성공하지 않음 (codex HIGH-3/P1-2)
+    code, out = _run_main(monkeypatch, tmp_path,
+                          info=_info(subs={"en": [{}]}), dl=_fake_dl_music)
+    assert code == E.EXIT_EMPTY_TRANSCRIPT
+    assert not os.path.exists(os.path.join(out, "transcript.txt"))
 
 
 # ── download_sub 단위: subprocess.run / time.sleep 모킹 ──────────

@@ -78,6 +78,26 @@ class TestSelectTrack(unittest.TestCase):
         info = {"subtitles": {}, "automatic_captions": {}}
         self.assertIsNone(E.select_track(info, ["ko"]))
 
+    # ── 버그② 재현: _match_lang 요청언어 미정규화 (--lang en-US → en 트랙) ──
+    def test_match_lang_normalizes_requested(self):
+        # 요청 'en-US'가 'en' 트랙에 매칭돼야 (수정 전: None = 버그)
+        self.assertEqual(E._match_lang({"en": [{}]}, "en-US"), "en")
+
+    def test_match_lang_exact_precedence(self):
+        # 정확일치가 정규화 폴백보다 우선
+        self.assertEqual(E._match_lang({"en": [{}], "en-US": [{}]}, "en-US"), "en-US")
+
+    def test_match_lang_reverse_still_works(self):
+        # 기존 정상 경로(트랙 태그가 변종) 무회귀
+        self.assertEqual(E._match_lang({"en-US": [{}]}, "en"), "en-US")
+
+    # ── 버그① 불변식 회귀: orig 지역변종은 원어자동(③)으로 잡혀 translated=False ──
+    def test_orig_regional_variant_not_flagged_translated(self):
+        # en-US 자동자막(orig=en) → 동일언어이므로 번역본 오표시 안 됨
+        info = {"language": "en", "subtitles": {},
+                "automatic_captions": {"en-US": [{}], "ko": [{}]}}
+        self.assertEqual(E.select_track(info, ["ko"]), ("en-US", True, False))
+
 
 class TestCleanSrt(unittest.TestCase):
     def test_rolling_dedup_and_tag_strip_and_marker(self):
@@ -118,8 +138,13 @@ class TestQualityGate(unittest.TestCase):
     def test_ok_above_min(self):
         self.assertTrue(E.quality_ok("a" * 250))
 
-    def test_fail_below_min(self):
-        self.assertFalse(E.quality_ok("a" * 199))
+    def test_short_valid_passes(self):
+        # 짧은 정상 영상도 통과 (codex HIGH-3 — 길이 검열 아님)
+        self.assertTrue(E.quality_ok("All right so here we are in front of the elephants"))
+
+    def test_empty_or_noise_fails(self):
+        self.assertFalse(E.quality_ok(""))
+        self.assertFalse(E.quality_ok("   "))
         self.assertFalse(E.quality_ok("short"))
 
 
