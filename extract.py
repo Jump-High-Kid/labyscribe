@@ -7,6 +7,8 @@ sample is captured to raw/ for comparison only. No post-conversion tool required
 
 Reference: README.md.
 """
+from __future__ import annotations
+
 import argparse
 import glob
 import json
@@ -16,6 +18,8 @@ import shutil
 import subprocess
 import sys
 import time
+from dataclasses import dataclass
+from typing import Optional
 from urllib.parse import urlparse
 
 # 재시도 가능한 일시 오류: rate-limit·네트워크
@@ -29,6 +33,23 @@ EXIT_DOWNLOAD_FAILED = 3  # 429/네트워크 재시도 소진
 EXIT_UNAVAILABLE = 4      # 비공개/삭제/지역/연령 — 정보 수집 비재시도 실패
 EXIT_BAD_INPUT = 5        # validate_url 실패
 EXIT_EMPTY_TRANSCRIPT = 6 # 자막 트랙은 받았으나 정제 결과 무효(빈/과소)
+
+# 다운로드 subprocess 타임아웃(초) — 무한 블로킹 차단(D-K·CK-37). 잠정값·실측 Phase 6.
+DOWNLOAD_TIMEOUT_SEC = 300
+
+
+@dataclass(frozen=True)
+class ExtractResult:
+    """run_extract 반환 계약 — exit_code 가 유일 판별자(main·server 매핑 SSOT).
+
+    frozen = immutability. main 은 `print(message); return exit_code` 어댑터,
+    server 는 exit_code 로 성공/에러 분기 후 구조화 스키마로 매핑.
+    """
+    exit_code: int
+    message: str
+    meta: dict                    # 성공 시 전체 meta·실패 시 부분(또는 {})
+    transcript: Optional[str]     # 성공 시 정제 transcript·실패 시 None
+
 
 # ── 순수함수 (단위 테스트 대상) ────────────────────────────────
 
@@ -293,8 +314,14 @@ def parse_vtt(raw, marker_interval=600):
 # ── 오케스트레이션 (subprocess — 단위테스트 밖, e2e 검증) ──────────
 
 def run_ytdlp_json(url):
-    r = subprocess.run(["yt-dlp", "-J", "--no-warnings", "--", url],
-                       capture_output=True, text=True)
+    # --no-playlist: 단일 영상만(플레이리스트/채널 자원 고갈 차단·D-K).
+    # timeout: 무한 블로킹 차단 → TimeoutExpired 를 RuntimeError 로 승격하면
+    # main/run_extract 의 _RETRYABLE("timed out") 분류로 DOWNLOAD_FAILED 처리.
+    try:
+        r = subprocess.run(["yt-dlp", "-J", "--no-warnings", "--no-playlist", "--", url],
+                           capture_output=True, text=True, timeout=DOWNLOAD_TIMEOUT_SEC)
+    except subprocess.TimeoutExpired as e:
+        raise RuntimeError("yt-dlp 정보 수집 timed out: %s" % e)
     if r.returncode != 0:
         raise RuntimeError("yt-dlp 정보 수집 실패: " + r.stderr.strip()[:300])
     return json.loads(r.stdout)
@@ -309,11 +336,20 @@ def download_sub(url, tag, outdir, vid, fmt="vtt", retries=3):
     """
     delay, last_err = 5, ""
     for attempt in range(retries + 1):
-        r = subprocess.run(
-            ["yt-dlp", "--write-subs", "--write-auto-subs", "--skip-download",
-             "--sub-langs", tag, "--sub-format", fmt,
-             "-o", os.path.join(outdir, "%(id)s.%(ext)s"), "--", url],
-            capture_output=True, text=True)
+        try:
+            r = subprocess.run(
+                ["yt-dlp", "--write-subs", "--write-auto-subs", "--skip-download",
+                 "--no-playlist", "--sub-langs", tag, "--sub-format", fmt,
+                 "-o", os.path.join(outdir, "%(id)s.%(ext)s"), "--", url],
+                capture_output=True, text=True, timeout=DOWNLOAD_TIMEOUT_SEC)
+        except subprocess.TimeoutExpired:
+            # 타임아웃 = 일시 오류로 취급(재시도 대상·최종엔 'failed').
+            last_err = "download timed out"
+            if attempt < retries:
+                time.sleep(min(delay, 60))
+                delay *= 3
+                continue
+            break
         hits = glob.glob(os.path.join(outdir, "%s*.%s" % (vid, fmt)))
         if hits:
             return hits[0], "ok"
@@ -331,23 +367,21 @@ def _dump_meta(outdir, meta):
         json.dump(meta, f, ensure_ascii=False, indent=2)
 
 
-def main(argv=None):
-    ap = argparse.ArgumentParser(description="유튜브 자막 추출 → transcript")
-    ap.add_argument("url")
-    ap.add_argument("--lang", default=None,
-                    help="자막 선호 언어(쉼표구분·원어 우선 후 폴백). 미지정 시 원본 언어 자동감지·우선")
-    ap.add_argument("--out", required=True)
-    a = ap.parse_args(argv)
+def run_extract(url, lang, outdir):
+    """오케스트레이션 SSOT — main·server 공통. URL검증→정보수집→트랙선정→
+    vtt확보→raw보존→json3 best-effort→parse_vtt→quality 게이트→기록.
 
+    반환 = ExtractResult(exit_code·message·meta·transcript). 크래시 없이 분류 종료.
+    (⚠ `shutil.which` preflight 는 여기 두지 않음 — server 경계에서·테스트 결정성.)
+    """
     # ── URL 검증 (SSRF allowlist) — 실패는 크래시가 아닌 분류 종료 ──
     try:
-        url = validate_url(a.url)
+        url = validate_url(url)
     except ValueError as e:
-        print("BAD_INPUT %s" % e)
-        return EXIT_BAD_INPUT
+        return ExtractResult(EXIT_BAD_INPUT, "BAD_INPUT %s" % e, {}, None)
 
-    os.makedirs(a.out, exist_ok=True)
-    rawdir = os.path.join(a.out, "raw")
+    os.makedirs(outdir, exist_ok=True)
+    rawdir = os.path.join(outdir, "raw")
     os.makedirs(rawdir, exist_ok=True)
 
     # ── 영상 정보 수집 (크래시0: RuntimeError를 재시도성/불가로 분류) ──
@@ -355,14 +389,16 @@ def main(argv=None):
         info = run_ytdlp_json(url)
     except RuntimeError as e:
         if _RETRYABLE.search(str(e)):
-            print("DOWNLOAD_FAILED 정보 수집 일시 실패(rate-limit/네트워크). "
-                  "잠시 후 재시도 요망.")
-            return EXIT_DOWNLOAD_FAILED
-        print("UNAVAILABLE 영상 접근 불가(비공개/삭제/지역/연령 등).")
-        return EXIT_UNAVAILABLE
+            return ExtractResult(
+                EXIT_DOWNLOAD_FAILED,
+                "DOWNLOAD_FAILED 정보 수집 일시 실패(rate-limit/네트워크). "
+                "잠시 후 재시도 요망.", {}, None)
+        return ExtractResult(
+            EXIT_UNAVAILABLE,
+            "UNAVAILABLE 영상 접근 불가(비공개/삭제/지역/연령 등).", {}, None)
 
     vid = info.get("id")
-    langs = [l.strip() for l in a.lang.split(",") if l.strip()] if a.lang else None
+    langs = [l.strip() for l in lang.split(",") if l.strip()] if lang else None
     orig = detect_orig_lang(info)
     meta = {
         "id": vid, "title": info.get("title"), "uploader": info.get("uploader"),
@@ -375,25 +411,26 @@ def main(argv=None):
     sel = select_track(info, langs)
     if not sel:
         meta["status"] = "no-subtitle"
-        _dump_meta(a.out, meta)
-        print("NO_SUBTITLE 자막 트랙 없음. id=%s" % vid)
-        return EXIT_NO_SUBTITLE
+        _dump_meta(outdir, meta)
+        return ExtractResult(EXIT_NO_SUBTITLE,
+                             "NO_SUBTITLE 자막 트랙 없음. id=%s" % vid, meta, None)
 
     tag, is_auto, translated = sel
 
     # ── 본경로: 네이티브 vtt 확보 ──
-    sub_path, status = download_sub(url, tag, a.out, vid, fmt="vtt")
+    sub_path, status = download_sub(url, tag, outdir, vid, fmt="vtt")
     if status == "failed":
         meta["status"] = "download-failed"
-        _dump_meta(a.out, meta)
-        print("DOWNLOAD_FAILED 자막 트랙 존재·다운로드 실패(rate-limit/네트워크). "
-              "잠시 후 재시도 요망. id=%s" % vid)
-        return EXIT_DOWNLOAD_FAILED
+        _dump_meta(outdir, meta)
+        return ExtractResult(
+            EXIT_DOWNLOAD_FAILED,
+            "DOWNLOAD_FAILED 자막 트랙 존재·다운로드 실패(rate-limit/네트워크). "
+            "잠시 후 재시도 요망. id=%s" % vid, meta, None)
     if status == "no_file" or not sub_path:
         meta["status"] = "no-subtitle"
-        _dump_meta(a.out, meta)
-        print("NO_SUBTITLE 자막 다운로드 파일 없음. id=%s" % vid)
-        return EXIT_NO_SUBTITLE
+        _dump_meta(outdir, meta)
+        return ExtractResult(EXIT_NO_SUBTITLE,
+                             "NO_SUBTITLE 자막 다운로드 파일 없음. id=%s" % vid, meta, None)
 
     # ok → 원본 vtt를 raw/에 불변 보존
     raw_vtt = os.path.join(rawdir, "%s.%s.vtt" % (vid, tag))
@@ -401,32 +438,47 @@ def main(argv=None):
     meta["lang"] = tag
     meta["is_auto"] = is_auto
     meta["translated"] = translated
-    meta["raw_vtt"] = os.path.relpath(raw_vtt, a.out)
+    meta["raw_vtt"] = os.path.relpath(raw_vtt, outdir)
 
     # ── D2 비교자료: json3 best-effort (실패 무시·비치명) ──
-    json3_path, json3_status = download_sub(url, tag, a.out, vid, fmt="json3", retries=0)
+    json3_path, json3_status = download_sub(url, tag, outdir, vid, fmt="json3", retries=0)
     if json3_status == "ok" and json3_path:
         raw_json3 = os.path.join(rawdir, "%s.%s.json3" % (vid, tag))
         shutil.copyfile(json3_path, raw_json3)
-        meta["raw_json3"] = os.path.relpath(raw_json3, a.out)
+        meta["raw_json3"] = os.path.relpath(raw_json3, outdir)
 
     # ── transcript 생성 (Phase 1). silent-failure 차단 = quality_ok 게이트 ──
     raw = open(raw_vtt, encoding="utf-8", errors="replace").read()
     transcript = parse_vtt(raw)
     if not quality_ok(_speech_text(transcript)):
         meta["status"] = "empty-transcript"
-        _dump_meta(a.out, meta)
-        print("EMPTY_TRANSCRIPT 자막은 받았으나 정제 결과 무효(빈/과소). "
-              "id=%s lang=%s" % (vid, tag))
-        return EXIT_EMPTY_TRANSCRIPT
+        _dump_meta(outdir, meta)
+        return ExtractResult(
+            EXIT_EMPTY_TRANSCRIPT,
+            "EMPTY_TRANSCRIPT 자막은 받았으나 정제 결과 무효(빈/과소). "
+            "id=%s lang=%s" % (vid, tag), meta, None)
 
-    with open(os.path.join(a.out, "transcript.txt"), "w", encoding="utf-8") as f:
+    with open(os.path.join(outdir, "transcript.txt"), "w", encoding="utf-8") as f:
         f.write(transcript)
     meta["status"] = "ok"
     meta["transcript"] = "transcript.txt"
-    _dump_meta(a.out, meta)              # 최종 status 확정 후 1회 dump
-    print("OK transcript 생성(id=%s lang=%s chars=%d)." % (vid, tag, len(transcript)))
-    return EXIT_OK
+    _dump_meta(outdir, meta)              # 최종 status 확정 후 1회 dump
+    return ExtractResult(
+        EXIT_OK,
+        "OK transcript 생성(id=%s lang=%s chars=%d)." % (vid, tag, len(transcript)),
+        meta, transcript)
+
+
+def main(argv=None):
+    ap = argparse.ArgumentParser(description="유튜브 자막 추출 → transcript")
+    ap.add_argument("url")
+    ap.add_argument("--lang", default=None,
+                    help="자막 선호 언어(쉼표구분·원어 우선 후 폴백). 미지정 시 원본 언어 자동감지·우선")
+    ap.add_argument("--out", required=True)
+    a = ap.parse_args(argv)
+    result = run_extract(a.url, a.lang, a.out)
+    print(result.message)
+    return result.exit_code
 
 
 if __name__ == "__main__":
