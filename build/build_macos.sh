@@ -7,7 +7,7 @@
 #     https://www.python.org/downloads/  (macOS 64-bit universal2 installer)
 #
 # 빌드타임 전용 도구(런타임 의존성 아님): PyInstaller · delocate · @anthropic-ai/mcpb(npx).
-# universal2 = pydantic-core·rpds-py 의 arm64/x86_64 thin wheel 을 delocate-fuse 로 융합(네이티브
+# universal2 = pydantic-core·rpds-py 의 arm64/x86_64 thin wheel 을 delocate-merge 로 융합(네이티브
 #   universal2 wheel 부재 — R2 실측). 융합 실패 시 arch-split(2 .mcpb) 폴백은 하단 주석 참조.
 set -euo pipefail
 
@@ -47,11 +47,12 @@ for spec in "pydantic-core==$PC_VER" "rpds-py==$RP_VER"; do
       -d "$WHEELS/$plat" "$spec"
   done
 done
-# delocate-fuse: arm64 + x86_64 thin → universal2 wheel
+# delocate-merge: arm64 + x86_64 thin → universal2 wheel
+# (delocate 0.12+ 에서 delocate-fuse 폐기 → delocate-merge. 자동 universal2 이름으로 fused/ 에 생성)
 for pkg in pydantic_core rpds_py; do
   A="$(ls "$WHEELS"/macosx_11_0_arm64/${pkg}-*.whl)"
   X="$(ls "$WHEELS"/macosx_10_12_x86_64/${pkg}-*.whl)"
-  "$VPY" -m delocate.cmd.delocate_fuse "$A" "$X" -w "$WHEELS/fused"
+  "$BUILD_VENV/bin/delocate-merge" "$A" "$X" -w "$WHEELS/fused"
 done
 "$VPY" -m pip install --force-reinstall --no-deps "$WHEELS"/fused/*.whl
 
@@ -64,10 +65,18 @@ rm -rf "$ROOT/build/pyi" "$ROOT/dist"
   --name labyscribe --onedir --target-arch universal2 \
   --distpath "$ROOT/dist" --workpath "$ROOT/build/pyi" --specpath "$ROOT/build/pyi" \
   --add-data "$ROOT/prompts:prompts" \
-  --collect-all mcp --collect-all pydantic --collect-all pydantic_core \
-  --copy-metadata mcp --copy-metadata pydantic \
+  --collect-submodules mcp.server --collect-data mcp --copy-metadata mcp \
+  --collect-all pydantic --collect-submodules pydantic_core --copy-metadata pydantic \
   "$ROOT/server.py"
-# 재현 시 hidden-import 누락 발견: --debug=imports 로 스모크 실행 후 --hidden-import 보강.
+# mcp 는 collect-all 금지 — mcp.cli 가 선택적 typer 를 import 해 수집 중 실패한다(우리는 stdio
+# 서버만 사용). mcp.server 서브모듈만 수집. hidden-import 누락은 아래 [4b] 스모크가 포착.
+
+echo "── [4b] frozen 바이너리 스모크(MCP 핸드셰이크 — hidden-import 누락 빌드타임 포착) ──"
+SMOKE_IN=$'{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2024-11-05","capabilities":{},"clientInfo":{"name":"build-smoke","version":"0"}}}\n{"jsonrpc":"2.0","method":"notifications/initialized"}\n{"jsonrpc":"2.0","id":2,"method":"tools/list"}'
+SMOKE_OUT="$( ( printf '%s\n' "$SMOKE_IN"; sleep 4 ) | OUTPUT_DIR="$(mktemp -d)" "$DIST/labyscribe" 2>/dev/null )"
+echo "$SMOKE_OUT" | grep -q '"name":"extract_transcript"' && echo "$SMOKE_OUT" | grep -q '"name":"get_transcript_part"' \
+  || { echo "ERROR: frozen 바이너리 스모크 실패(도구 미노출=hidden-import 누락 의심). '$VPY -m PyInstaller … --debug=imports' 로 진단"; exit 1; }
+echo "  ✓ MCP 핸드셰이크·도구 2개 노출"
 
 echo "── [5/7] 번들 yt-dlp sibling 배치(중첩 PyInstaller 회피 — add-binary 아님) ──"
 install -m 755 "$ROOT/build/vendor/yt-dlp" "$DIST/yt-dlp"
@@ -92,7 +101,7 @@ echo "완료: $MCPB_OUT"
 lipo -archs "$DIST/labyscribe"
 
 # ── arch-split 폴백(universal2 융합 실패 시) ────────────────────────────
-# delocate-fuse/PyInstaller universal2 가 불가하면 arch별 2 아티팩트로 배포:
+# delocate-merge/PyInstaller universal2 가 불가하면 arch별 2 아티팩트로 배포:
 #   arm64:  네이티브 python.org arm64 로 --target-arch arm64  → labyscribe-arm64.mcpb
 #   x86_64: arch -x86_64 python.org x86_64 로 --target-arch x86_64 → labyscribe-x86_64.mcpb
 # (사용자가 Apple Silicon/Intel 에 맞는 .mcpb 선택. platform_overrides 는 OS 단위라 arch 분기 불가.)

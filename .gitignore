@@ -10,6 +10,7 @@ out/
 /build/pyi/
 /.venv-build/
 *.mcpb
+*.egg-info/
 
 # 하네스 run 산출물 — harness-adr.yaml(영구 ADR)만 예외로 tracked
 .harness/*
