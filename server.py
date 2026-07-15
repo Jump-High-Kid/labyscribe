@@ -20,7 +20,6 @@ labyscribe 는 요약을 하지 않는다("무료 메커니즘"). 이 서버는 
 from __future__ import annotations
 
 import os
-import secrets
 import sys
 import traceback
 from functools import lru_cache
@@ -29,12 +28,16 @@ from urllib.parse import parse_qs, urlparse
 
 from mcp.server.fastmcp import FastMCP
 
+import storage
 from extract import (
+    DOWNLOAD_TIMEOUT_SEC,
     EXIT_BAD_INPUT,
     EXIT_DOWNLOAD_FAILED,
     EXIT_EMPTY_TRANSCRIPT,
     EXIT_NO_SUBTITLE,
     EXIT_OK,
+    EXIT_STORAGE_LIMIT,
+    EXIT_SUBTITLE_TOO_LARGE,
     EXIT_UNAVAILABLE,
     run_extract,
 )
@@ -54,6 +57,10 @@ _TRANSCRIPT_PART_BUDGET = PART_LIMIT_BYTES - _RESPONSE_OVERHEAD_BYTES
 
 _DEFAULT_OUTPUT_DIR = "~/labyscribe"
 
+# 서버 시작 시 stale temp 정리 임계 — 최대 추출시간(타임아웃 × (재시도+1)) 여유. 이보다
+# 오래된 <root>/.tmp/* 만 삭제(라이브 temp 보존·codex HIGH). 잠정·실측 Phase 6.
+_STALE_TEMP_MAX_AGE_SEC = DOWNLOAD_TIMEOUT_SEC * 8
+
 # exit code → 구조화 에러 code (D-H). 미분류는 UNKNOWN_DOWNLOAD_FAILURE 폴백.
 _EXIT_TO_CODE = {
     EXIT_NO_SUBTITLE: "NO_SUBTITLE",
@@ -61,6 +68,8 @@ _EXIT_TO_CODE = {
     EXIT_UNAVAILABLE: "VIDEO_UNAVAILABLE",
     EXIT_BAD_INPUT: "BAD_INPUT",
     EXIT_EMPTY_TRANSCRIPT: "EMPTY_TRANSCRIPT",
+    EXIT_STORAGE_LIMIT: "STORAGE_LIMIT_EXCEEDED",
+    EXIT_SUBTITLE_TOO_LARGE: "SUBTITLE_TOO_LARGE",
 }
 
 # 채널/재생목록 경로 조각(단일 영상만 허용·자원 고갈 차단·D-K).
@@ -133,18 +142,10 @@ def _do_extract(url: str, lang: Optional[str] = None) -> dict:
     input_err = _validate_input(url)
     if input_err is not None:
         return input_err
-    # 3) 요청별 격리 디렉토리(동시 상호 덮어쓰기 0·CK-37).
-    #    video_id 는 추출 후에야 알 수 있어 요청별 난수 서브디렉토리로 격리한다.
-    #    불변 <video_id>/<lang>-<hash>/ 구조·원자성·총량상한은 Phase 3.
-    outdir = os.path.join(_resolve_output_dir(), secrets.token_hex(8))
+    # 3) 추출 — 저장 루트 전달(Phase 3·D3-D). temp/final 격리·원자 발행·총량상한·캐시조회는
+    #    run_extract 가 storage 로 스스로 관리(video_id 사전미지라 dir 사전결정 불가).
     try:
-        os.makedirs(outdir, exist_ok=True)
-    except OSError:
-        traceback.print_exc(file=sys.stderr)      # 상세는 서버 stderr 만
-        return _err("OUTPUT_WRITE_FAILED", "출력 디렉터리를 만들 수 없습니다.")
-    # 4) 추출(subprocess timeout·자막 최대 바이트는 extract·server 각 경계)
-    try:
-        result = run_extract(url, lang, outdir)
+        result = run_extract(url, lang, _resolve_output_dir())
     except OSError:
         traceback.print_exc(file=sys.stderr)
         return _err("OUTPUT_WRITE_FAILED", "출력 저장 중 오류가 발생했습니다.")
@@ -217,4 +218,6 @@ def summarize_video() -> str:
 
 
 if __name__ == "__main__":
+    # 시작 시 오래된 stale temp 정리(라이브 temp 는 age-based 로 보존·D3-F).
+    storage.cleanup_stale_temp(_resolve_output_dir(), _STALE_TEMP_MAX_AGE_SEC)
     mcp.run()   # stdio 기본

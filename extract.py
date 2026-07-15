@@ -10,7 +10,6 @@ Reference: README.md.
 from __future__ import annotations
 
 import argparse
-import glob
 import json
 import os
 import re
@@ -21,6 +20,9 @@ import time
 from dataclasses import dataclass
 from typing import Optional
 from urllib.parse import urlparse
+
+import storage
+from handles import content_hash
 
 # 재시도 가능한 일시 오류: rate-limit·네트워크
 _RETRYABLE = re.compile(r"429|Too Many Requests|Temporary failure|timed out|Connection",
@@ -33,9 +35,21 @@ EXIT_DOWNLOAD_FAILED = 3  # 429/네트워크 재시도 소진
 EXIT_UNAVAILABLE = 4      # 비공개/삭제/지역/연령 — 정보 수집 비재시도 실패
 EXIT_BAD_INPUT = 5        # validate_url 실패
 EXIT_EMPTY_TRANSCRIPT = 6 # 자막 트랙은 받았으나 정제 결과 무효(빈/과소)
+EXIT_STORAGE_LIMIT = 7    # 저장 디스크 총량 HARD 상한 초과(신규추출 거부·기존본 삭제 0)
+EXIT_SUBTITLE_TOO_LARGE = 8  # 다운로드 자막 파일이 하드캡 초과(읽기 전 삭제·메모리 백스톱)
 
 # 다운로드 subprocess 타임아웃(초) — 무한 블로킹 차단(D-K·CK-37). 잠정값·실측 Phase 6.
 DOWNLOAD_TIMEOUT_SEC = 300
+
+# 정책 상한(잠정 고정 상수·YAGNI·실측 Phase 6). server MAX_SUBTITLE_BYTES(transcript 후처리)
+# 와 구분 — 이건 raw 자막 파일 자체의 stat 상한.
+SUBTITLE_FILE_MAX_BYTES = 32 * 1024 * 1024   # raw 자막 파일 하드캡(다운로드 후 stat·32MB)
+DISK_SOFT_BYTES = 2 * 1024 * 1024 * 1024     # 저장 루트 총량 경고선(2GB)
+DISK_HARD_BYTES = 5 * 1024 * 1024 * 1024     # 저장 루트 총량 거부선(5GB·신규추출 차단)
+
+# run_ytdlp_json 의 -J stdout 캡(초과 시 정보 과대로 중단·메모리 축적 차단). 잠정·Phase 6.
+_INFO_STDOUT_CAP_BYTES = 64 * 1024 * 1024
+_STDERR_CAP_BYTES = 8 * 1024
 
 
 @dataclass(frozen=True)
@@ -315,16 +329,24 @@ def parse_vtt(raw, marker_interval=600):
 
 def run_ytdlp_json(url):
     # --no-playlist: 단일 영상만(플레이리스트/채널 자원 고갈 차단·D-K).
+    # run_capped 경유(-J stdout tempfile 리다이렉트·64MB 캡 초과 시 None·메모리 축적 차단).
     # timeout: 무한 블로킹 차단 → TimeoutExpired 를 RuntimeError 로 승격하면
     # main/run_extract 의 _RETRYABLE("timed out") 분류로 DOWNLOAD_FAILED 처리.
+    argv = ["yt-dlp", "-J", "--no-warnings", "--no-playlist", "--", url]
     try:
-        r = subprocess.run(["yt-dlp", "-J", "--no-warnings", "--no-playlist", "--", url],
-                           capture_output=True, text=True, timeout=DOWNLOAD_TIMEOUT_SEC)
+        rc, out, err = storage.run_capped(
+            argv, timeout=DOWNLOAD_TIMEOUT_SEC, want_stdout=True,
+            stdout_cap=_INFO_STDOUT_CAP_BYTES, stderr_cap=_STDERR_CAP_BYTES)
     except subprocess.TimeoutExpired as e:
         raise RuntimeError("yt-dlp 정보 수집 timed out: %s" % e)
-    if r.returncode != 0:
-        raise RuntimeError("yt-dlp 정보 수집 실패: " + r.stderr.strip()[:300])
-    return json.loads(r.stdout)
+    if rc != 0:
+        raise RuntimeError("yt-dlp 정보 수집 실패: " + err.strip()[:300])
+    if out is None:
+        raise RuntimeError("yt-dlp 정보 과대(%d bytes 초과)" % _INFO_STDOUT_CAP_BYTES)
+    try:                                   # 비-JSON stdout → 크래시 아닌 분류종료(계약)
+        return json.loads(out)
+    except ValueError as e:
+        raise RuntimeError("yt-dlp 정보 JSON 파싱 실패: %s" % e)
 
 
 def download_sub(url, tag, outdir, vid, fmt="vtt", retries=3):
@@ -332,16 +354,25 @@ def download_sub(url, tag, outdir, vid, fmt="vtt", retries=3):
 
     status: 'ok'(파일 확보) · 'failed'(429/네트워크로 재시도 소진 — 트랙은 있음) ·
     'no_file'(비재시도성으로 파일 없음). 'failed'는 일시 오류이므로 재시도 대상.
+
+    판정: returncode==0 **먼저** + 정확 파일명(`<vid>.<tag>.<fmt>`) 존재. glob 와일드카드
+    금지(부분/타언어 파일 성공 오인 0·CK-10). run_capped 경유(stderr tempfile 캡·stdout
+    DEVNULL). `--max-filesize` 로 다운로드중 1차 disk 캡. 재시도 전 부분/잔존 파일 정리.
     지수 백오프 재시도(최대 retries회·상한 60s).
     """
+    expected = os.path.join(outdir, "%s.%s.%s" % (vid, tag, fmt))
+    argv = ["yt-dlp", "--write-subs", "--write-auto-subs", "--skip-download",
+            "--no-playlist", "--sub-langs", tag, "--sub-format", fmt,
+            "--max-filesize", str(SUBTITLE_FILE_MAX_BYTES),
+            "-o", os.path.join(outdir, "%(id)s.%(ext)s"), "--", url]
     delay, last_err = 5, ""
     for attempt in range(retries + 1):
+        if os.path.exists(expected):
+            os.remove(expected)             # 재시도 전 부분/잔존 정리(성공 오인 차단)
         try:
-            r = subprocess.run(
-                ["yt-dlp", "--write-subs", "--write-auto-subs", "--skip-download",
-                 "--no-playlist", "--sub-langs", tag, "--sub-format", fmt,
-                 "-o", os.path.join(outdir, "%(id)s.%(ext)s"), "--", url],
-                capture_output=True, text=True, timeout=DOWNLOAD_TIMEOUT_SEC)
+            rc, _out, err = storage.run_capped(
+                argv, timeout=DOWNLOAD_TIMEOUT_SEC, want_stdout=False,
+                stdout_cap=0, stderr_cap=_STDERR_CAP_BYTES)
         except subprocess.TimeoutExpired:
             # 타임아웃 = 일시 오류로 취급(재시도 대상·최종엔 'failed').
             last_err = "download timed out"
@@ -350,10 +381,9 @@ def download_sub(url, tag, outdir, vid, fmt="vtt", retries=3):
                 delay *= 3
                 continue
             break
-        hits = glob.glob(os.path.join(outdir, "%s*.%s" % (vid, fmt)))
-        if hits:
-            return hits[0], "ok"
-        last_err = (r.stderr or "").strip()
+        if rc == 0 and os.path.exists(expected):
+            return expected, "ok"           # returncode 우선 + 정확 파일명
+        last_err = err.strip()
         if attempt < retries and _RETRYABLE.search(last_err):
             time.sleep(min(delay, 60))
             delay *= 3
@@ -362,29 +392,24 @@ def download_sub(url, tag, outdir, vid, fmt="vtt", retries=3):
     return None, ("failed" if _RETRYABLE.search(last_err) else "no_file")
 
 
-def _dump_meta(outdir, meta):
-    with open(os.path.join(outdir, "meta.json"), "w", encoding="utf-8") as f:
-        json.dump(meta, f, ensure_ascii=False, indent=2)
+def run_extract(url, lang, output_root):
+    """오케스트레이션 SSOT — main·server 공통. URL검증→정보수집→트랙선정→캐시조회→
+    temp확보→raw보존→json3 best-effort→parse_vtt→quality 게이트→atomic 발행.
 
-
-def run_extract(url, lang, outdir):
-    """오케스트레이션 SSOT — main·server 공통. URL검증→정보수집→트랙선정→
-    vtt확보→raw보존→json3 best-effort→parse_vtt→quality 게이트→기록.
-
-    반환 = ExtractResult(exit_code·message·meta·transcript). 크래시 없이 분류 종료.
+    output_root = 저장 루트(D3-D). video_id 는 추출 후에야 알 수 있어 run_extract 가
+    temp/final 을 스스로 관리한다. 반환 = ExtractResult(exit_code·message·meta·transcript).
+    실패경로는 temp 를 finally 정리해 디스크 흔적 0(완결세트만 published·AC-11).
     (⚠ `shutil.which` preflight 는 여기 두지 않음 — server 경계에서·테스트 결정성.)
     """
-    # ── URL 검증 (SSRF allowlist) — 실패는 크래시가 아닌 분류 종료 ──
+    # ① URL 검증 (SSRF allowlist) — 실패는 크래시가 아닌 분류 종료
     try:
         url = validate_url(url)
     except ValueError as e:
         return ExtractResult(EXIT_BAD_INPUT, "BAD_INPUT %s" % e, {}, None)
 
-    os.makedirs(outdir, exist_ok=True)
-    rawdir = os.path.join(outdir, "raw")
-    os.makedirs(rawdir, exist_ok=True)
+    root = os.path.abspath(output_root)
 
-    # ── 영상 정보 수집 (크래시0: RuntimeError를 재시도성/불가로 분류) ──
+    # ② 영상 정보 수집 (크래시0: RuntimeError를 재시도성/불가로 분류) — 캐시히트에도 1회(D3-C)
     try:
         info = run_ytdlp_json(url)
     except RuntimeError as e:
@@ -397,7 +422,11 @@ def run_extract(url, lang, outdir):
             EXIT_UNAVAILABLE,
             "UNAVAILABLE 영상 접근 불가(비공개/삭제/지역/연령 등).", {}, None)
 
+    # ③ vid·langs·orig·meta 조립
     vid = info.get("id")
+    if not vid:                            # id 누락 = 정보 계약 위반 → None/ 저장본 생성 차단
+        return ExtractResult(EXIT_UNAVAILABLE,
+                             "UNAVAILABLE 영상 id 없음(정보 수집 이상).", {}, None)
     langs = [l.strip() for l in lang.split(",") if l.strip()] if lang else None
     orig = detect_orig_lang(info)
     meta = {
@@ -408,65 +437,131 @@ def run_extract(url, lang, outdir):
         "orig_lang": orig,
     }
 
+    # ④ 트랙 선정 → 없으면 NO_SUBTITLE(인메모리 meta·디스크쓰기 0)
     sel = select_track(info, langs)
     if not sel:
         meta["status"] = "no-subtitle"
-        _dump_meta(outdir, meta)
         return ExtractResult(EXIT_NO_SUBTITLE,
                              "NO_SUBTITLE 자막 트랙 없음. id=%s" % vid, meta, None)
-
     tag, is_auto, translated = sel
 
-    # ── 본경로: 네이티브 vtt 확보 ──
-    sub_path, status = download_sub(url, tag, outdir, vid, fmt="vtt")
-    if status == "failed":
-        meta["status"] = "download-failed"
-        _dump_meta(outdir, meta)
+    # ⑤ 경로 성분 안전성(traversal 필수차단) — 위반은 OSError→server OUTPUT_WRITE_FAILED
+    if not (storage.is_safe_component(str(vid)) and storage.is_safe_component(tag)):
+        raise OSError("안전하지 않은 경로 성분: vid=%r tag=%r" % (vid, tag))
+
+    # ⑥ 캐시조회(다운로드 전) — 완결 저장본 있으면 자막 다운로드 스킵(D3-C)
+    cached = storage.find_cached(root, str(vid), tag)
+    if cached:
+        r = storage.read_published(cached)
+        if r:
+            c_transcript, c_meta = r
+            return ExtractResult(
+                EXIT_OK,
+                "OK transcript 캐시 히트(id=%s lang=%s chars=%d) → %s"
+                % (vid, tag, len(c_transcript), cached), c_meta, c_transcript)
+
+    # ⑦ 디스크 총량 상한(D3-E) — HARD 거부 · SOFT 경고 · 캐시 히트는 면제(위에서 반환)
+    used = storage.disk_usage(root)
+    if used > DISK_HARD_BYTES:
         return ExtractResult(
-            EXIT_DOWNLOAD_FAILED,
-            "DOWNLOAD_FAILED 자막 트랙 존재·다운로드 실패(rate-limit/네트워크). "
-            "잠시 후 재시도 요망. id=%s" % vid, meta, None)
-    if status == "no_file" or not sub_path:
-        meta["status"] = "no-subtitle"
-        _dump_meta(outdir, meta)
-        return ExtractResult(EXIT_NO_SUBTITLE,
-                             "NO_SUBTITLE 자막 다운로드 파일 없음. id=%s" % vid, meta, None)
+            EXIT_STORAGE_LIMIT,
+            "STORAGE_LIMIT 저장 디스크 총량 상한 초과(used=%d bytes). 정리 후 재시도." % used,
+            meta, None)
+    if used > DISK_SOFT_BYTES:
+        print("경고: 저장 디스크 사용량 %d bytes (soft 상한 %d 초과)"
+              % (used, DISK_SOFT_BYTES), file=sys.stderr)
 
-    # ok → 원본 vtt를 raw/에 불변 보존
-    raw_vtt = os.path.join(rawdir, "%s.%s.vtt" % (vid, tag))
-    shutil.copyfile(sub_path, raw_vtt)
-    meta["lang"] = tag
-    meta["is_auto"] = is_auto
-    meta["translated"] = translated
-    meta["raw_vtt"] = os.path.relpath(raw_vtt, outdir)
+    # ⑧ temp 확보 → 완결 후 atomic 발행. 실패/예외는 finally 로 temp 정리(흔적 0)
+    temp = storage.make_temp(root)
+    try:
+        # a 본경로: 네이티브 vtt 확보
+        sub_path, status = download_sub(url, tag, temp, vid, fmt="vtt")
+        if status == "failed":
+            meta["status"] = "download-failed"
+            return ExtractResult(
+                EXIT_DOWNLOAD_FAILED,
+                "DOWNLOAD_FAILED 자막 트랙 존재·다운로드 실패(rate-limit/네트워크). "
+                "잠시 후 재시도 요망. id=%s" % vid, meta, None)
+        if status == "no_file" or not sub_path:
+            meta["status"] = "no-subtitle"
+            return ExtractResult(
+                EXIT_NO_SUBTITLE,
+                "NO_SUBTITLE 자막 다운로드 파일 없음. id=%s" % vid, meta, None)
 
-    # ── D2 비교자료: json3 best-effort (실패 무시·비치명) ──
-    json3_path, json3_status = download_sub(url, tag, outdir, vid, fmt="json3", retries=0)
-    if json3_status == "ok" and json3_path:
-        raw_json3 = os.path.join(rawdir, "%s.%s.json3" % (vid, tag))
-        shutil.copyfile(json3_path, raw_json3)
-        meta["raw_json3"] = os.path.relpath(raw_json3, outdir)
+        # b 하드캡 백스톱: 읽기 전 stat → 초과 시 삭제 + SUBTITLE_TOO_LARGE(전량 메모리읽기 0)
+        if os.stat(sub_path).st_size > SUBTITLE_FILE_MAX_BYTES:
+            os.remove(sub_path)
+            return ExtractResult(
+                EXIT_SUBTITLE_TOO_LARGE,
+                "SUBTITLE_TOO_LARGE 자막 파일이 최대 크기(%d bytes)를 초과했습니다. id=%s"
+                % (SUBTITLE_FILE_MAX_BYTES, vid), meta, None)
 
-    # ── transcript 생성 (Phase 1). silent-failure 차단 = quality_ok 게이트 ──
-    raw = open(raw_vtt, encoding="utf-8", errors="replace").read()
-    transcript = parse_vtt(raw)
-    if not quality_ok(_speech_text(transcript)):
-        meta["status"] = "empty-transcript"
-        _dump_meta(outdir, meta)
+        # c 원본 vtt를 raw/에 불변 보존(fsync). scratch 정리는 발행 전 sweep(g′)에 일임
+        raw_vtt = os.path.join(temp, "raw", "%s.%s.vtt" % (vid, tag))
+        storage.copy_file_synced(sub_path, raw_vtt)
+        meta["lang"] = tag
+        meta["is_auto"] = is_auto
+        meta["translated"] = translated
+        meta["raw_vtt"] = os.path.relpath(raw_vtt, temp)
+
+        # d D2 비교자료: json3 best-effort (실패·캡초과 시 json3만 skip·전체실패 아님)
+        json3_path, json3_status = download_sub(url, tag, temp, vid, fmt="json3", retries=0)
+        if json3_status == "ok" and json3_path:
+            try:
+                if os.stat(json3_path).st_size <= SUBTITLE_FILE_MAX_BYTES:
+                    raw_json3 = os.path.join(temp, "raw", "%s.%s.json3" % (vid, tag))
+                    storage.copy_file_synced(json3_path, raw_json3)
+                    meta["raw_json3"] = os.path.relpath(raw_json3, temp)
+            except OSError:
+                pass                        # json3 = 비치명(best-effort)
+
+        # e transcript 생성 (Phase 1). silent-failure 차단 = quality_ok 게이트
+        with open(raw_vtt, encoding="utf-8", errors="replace") as f:
+            raw = f.read()
+        transcript = parse_vtt(raw)
+        if not quality_ok(_speech_text(transcript)):
+            meta["status"] = "empty-transcript"
+            return ExtractResult(
+                EXIT_EMPTY_TRANSCRIPT,
+                "EMPTY_TRANSCRIPT 자막은 받았으나 정제 결과 무효(빈/과소). "
+                "id=%s lang=%s" % (vid, tag), meta, None)
+
+        # f meta 확정 + temp 안에 완결세트 기록(fsync)
+        meta["status"] = "ok"
+        meta["transcript"] = "transcript.txt"
+        storage.write_text_synced(os.path.join(temp, "transcript.txt"), transcript)
+        storage.write_text_synced(os.path.join(temp, "meta.json"),
+                                  json.dumps(meta, ensure_ascii=False, indent=2))
+
+        # g′ 발행 전 sweep — 완결세트(transcript.txt·meta.json·raw/) 외 최상위 잔여
+        #    scratch 파일 무조건 제거 → 리프 형태 불변 보장(CK-1·정규화 미스 stray 포함)
+        for name in os.listdir(temp):
+            p = os.path.join(temp, name)
+            if os.path.isfile(p) and name not in ("transcript.txt", "meta.json"):
+                os.remove(p)
+
+        # g 불변 버전 디렉토리로 atomic 발행. 경쟁패자는 재조회(idempotent·D3-B)
+        final = os.path.join(root, str(vid),
+                             storage.version_dir_name(tag, content_hash(transcript)))
+        if not storage.atomic_publish(temp, final, root):
+            r = storage.read_published(final)
+            if r:
+                p_transcript, p_meta = r
+                return ExtractResult(
+                    EXIT_OK,
+                    "OK transcript 동시발행 재조회(id=%s lang=%s chars=%d) → %s"
+                    % (vid, tag, len(p_transcript), final), p_meta, p_transcript)
+            # 경쟁 패자인데 기존본 읽기 실패(손상 가능) → false success 금지·재시도성 분류
+            return ExtractResult(
+                EXIT_DOWNLOAD_FAILED,
+                "DOWNLOAD_FAILED 발행 경쟁 후 기존 저장본 읽기 실패(손상 가능). "
+                "잠시 후 재시도 요망. id=%s" % vid, meta, None)
         return ExtractResult(
-            EXIT_EMPTY_TRANSCRIPT,
-            "EMPTY_TRANSCRIPT 자막은 받았으나 정제 결과 무효(빈/과소). "
-            "id=%s lang=%s" % (vid, tag), meta, None)
-
-    with open(os.path.join(outdir, "transcript.txt"), "w", encoding="utf-8") as f:
-        f.write(transcript)
-    meta["status"] = "ok"
-    meta["transcript"] = "transcript.txt"
-    _dump_meta(outdir, meta)              # 최종 status 확정 후 1회 dump
-    return ExtractResult(
-        EXIT_OK,
-        "OK transcript 생성(id=%s lang=%s chars=%d)." % (vid, tag, len(transcript)),
-        meta, transcript)
+            EXIT_OK,
+            "OK transcript 생성(id=%s lang=%s chars=%d) → %s"
+            % (vid, tag, len(transcript), final), meta, transcript)
+    finally:
+        shutil.rmtree(temp, ignore_errors=True)   # 발행성공=no-op·실패=흔적 정리
 
 
 def main(argv=None):
@@ -474,7 +569,8 @@ def main(argv=None):
     ap.add_argument("url")
     ap.add_argument("--lang", default=None,
                     help="자막 선호 언어(쉼표구분·원어 우선 후 폴백). 미지정 시 원본 언어 자동감지·우선")
-    ap.add_argument("--out", required=True)
+    ap.add_argument("--out", required=True,
+                    help="저장 루트 — <root>/<video_id>/<tag>-<hash>/ 에 완결세트 발행")
     a = ap.parse_args(argv)
     result = run_extract(a.url, a.lang, a.out)
     print(result.message)

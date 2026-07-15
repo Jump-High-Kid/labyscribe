@@ -17,6 +17,8 @@ from extract import (
     EXIT_EMPTY_TRANSCRIPT,
     EXIT_NO_SUBTITLE,
     EXIT_OK,
+    EXIT_STORAGE_LIMIT,
+    EXIT_SUBTITLE_TOO_LARGE,
     EXIT_UNAVAILABLE,
     ExtractResult,
 )
@@ -139,6 +141,8 @@ def test_invalid_and_out_of_range_handles(monkeypatch, tmp_path):
     (EXIT_UNAVAILABLE, "VIDEO_UNAVAILABLE"),
     (EXIT_BAD_INPUT, "BAD_INPUT"),
     (EXIT_EMPTY_TRANSCRIPT, "EMPTY_TRANSCRIPT"),
+    (EXIT_STORAGE_LIMIT, "STORAGE_LIMIT_EXCEEDED"),       # Phase 3 신규(CK-16)
+    (EXIT_SUBTITLE_TOO_LARGE, "SUBTITLE_TOO_LARGE"),      # Phase 3 신규(CK-16)
     (99, "UNKNOWN_DOWNLOAD_FAILURE"),      # 미분류 exit → UNKNOWN 폴백
 ])
 def test_exit_code_error_mapping(monkeypatch, tmp_path, exit_code, expected):
@@ -172,13 +176,9 @@ def test_output_write_failure_maps_structured(monkeypatch, tmp_path):
     assert r["error"]["code"] == "OUTPUT_WRITE_FAILED"
 
 
-def test_makedirs_failure_maps_structured(monkeypatch, tmp_path):
-    _prep(monkeypatch, tmp_path, lambda u, l, o: _ok_result())
-    def bad_makedirs(*a, **k):
-        raise OSError("no permission")
-    monkeypatch.setattr(S.os, "makedirs", bad_makedirs)
-    r = S._do_extract(VALID_URL)
-    assert r["error"]["code"] == "OUTPUT_WRITE_FAILED"
+# (Phase 3: server 는 makedirs 를 직접 하지 않음 — 격리 dir 생성은 run_extract 의
+#  storage.make_temp 로 이동. run_extract 가 OSError 를 던지는 경로는
+#  test_output_write_failure_maps_structured 가 이미 커버.)
 
 
 # ── CK-36 입력 검증 ─────────────────────────────────────────────
@@ -201,19 +201,20 @@ def test_single_video_url_passes_validation(monkeypatch, tmp_path):
     assert "error" not in r
 
 
-# ── CK-37 자원 한도·요청별 격리 ─────────────────────────────────
+# ── CK-14 signature·자원 한도 ───────────────────────────────────
 
-def test_per_request_isolation_distinct_outdirs(monkeypatch, tmp_path):
+def test_extract_passes_output_root(monkeypatch, tmp_path):
+    # Phase 3(D3-D): server 는 저장 루트(OUTPUT_DIR)를 run_extract 에 전달 — 격리는
+    # run_extract 내부 storage.make_temp(.tmp/<token>)로 이동(server 난수 dir 폐기).
     seen = []
-    def rec(url, lang, outdir):
-        seen.append(outdir)
+    def rec(url, lang, output_root):
+        seen.append(output_root)
         return _ok_result()
     _prep(monkeypatch, tmp_path, rec)
     S._do_extract(VALID_URL)
     S._do_extract(VALID_URL)
-    assert len(seen) == 2 and seen[0] != seen[1]         # 상호 덮어쓰기 0
-    for o in seen:
-        assert o.startswith(str(tmp_path))                # OUTPUT_DIR 하위
+    assert len(seen) == 2
+    assert seen[0] == seen[1] == str(tmp_path)           # 동일 root 전달
 
 
 def test_transcript_too_large_byte_cap(monkeypatch, tmp_path):
