@@ -4,6 +4,13 @@ __pycache__/
 *.pyc
 out/
 
+# Phase 5 빌드 산출물(레시피 build/*.sh·manifest.json 은 커밋 · 산출물은 무시)
+/dist/
+/build/vendor/
+/build/pyi/
+/.venv-build/
+*.mcpb
+
 # 하네스 run 산출물 — harness-adr.yaml(영구 ADR)만 예외로 tracked
 .harness/*
 !.harness/harness-adr.yaml

@@ -478,3 +478,40 @@ def test_race_lost_unreadable_peer_not_false_ok(monkeypatch, tmp_path):
     r = E.run_extract(VALID_URL, None, out)
     assert r.exit_code == E.EXIT_DOWNLOAD_FAILED                         # OK 아님
     assert r.transcript is None
+
+
+# ── Phase 5 W1-a: yt-dlp 경로 해석(_ytdlp_bin env→frozen인접→PATH·CK-1) ──
+
+def test_ytdlp_bin_env_override_first(monkeypatch):
+    # 브랜치①: env YTDLP_PATH 최우선(.mcpb manifest·테스트 seam) — frozen 이어도 우선
+    monkeypatch.setenv("YTDLP_PATH", "/custom/path/yt-dlp")
+    monkeypatch.setattr(E.sys, "frozen", True, raising=False)
+    assert E._ytdlp_bin() == "/custom/path/yt-dlp"
+
+
+def test_ytdlp_bin_frozen_sibling(monkeypatch, tmp_path):
+    # 브랜치②: 번들(frozen) 실행파일 인접 yt-dlp(onedir sibling)
+    monkeypatch.delenv("YTDLP_PATH", raising=False)
+    (tmp_path / "yt-dlp").write_text("x")
+    monkeypatch.setattr(E.sys, "frozen", True, raising=False)
+    monkeypatch.setattr(E.sys, "executable", str(tmp_path / "labyscribe"))
+    assert E._ytdlp_bin() == str(tmp_path / "yt-dlp")
+
+
+def test_ytdlp_bin_frozen_meipass(monkeypatch, tmp_path):
+    # 브랜치②: 실행파일 dir 엔 없고 _MEIPASS 에 있음(onefile)
+    monkeypatch.delenv("YTDLP_PATH", raising=False)
+    exedir = tmp_path / "bin"; exedir.mkdir()
+    meipass = tmp_path / "mei"; meipass.mkdir()
+    (meipass / "yt-dlp").write_text("x")
+    monkeypatch.setattr(E.sys, "frozen", True, raising=False)
+    monkeypatch.setattr(E.sys, "executable", str(exedir / "labyscribe"))
+    monkeypatch.setattr(E.sys, "_MEIPASS", str(meipass), raising=False)
+    assert E._ytdlp_bin() == str(meipass / "yt-dlp")
+
+
+def test_ytdlp_bin_source_fallback(monkeypatch):
+    # 브랜치③: 무env·비frozen(소스/개발) → "yt-dlp" 리터럴(PATH 해석·무회귀)
+    monkeypatch.delenv("YTDLP_PATH", raising=False)
+    monkeypatch.setattr(E.sys, "frozen", False, raising=False)
+    assert E._ytdlp_bin() == "yt-dlp"

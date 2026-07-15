@@ -330,3 +330,57 @@ def test_each_part_serialized_within_limit(monkeypatch, tmp_path):
         part = S._do_get_part(r["transcript_handle"], k)
         blob = json.dumps(part, ensure_ascii=False).encode("utf-8")
         assert len(blob) <= paging.PART_LIMIT_BYTES   # 오버헤드 포함해도 상한 이하
+
+
+# ── Phase 5 W1-b: frozen 리소스 경로(_resource_dir → _MEIPASS·CK-3) ──
+
+def test_frozen_prompt_loads_from_meipass(monkeypatch, tmp_path):
+    # frozen 이면 _MEIPASS/prompts 에서 로드(소스 경로 아님) — sentinel 로 브랜치 증명
+    S._load_summary_prompt.cache_clear()
+    prompts = tmp_path / "mei" / "prompts"
+    prompts.mkdir(parents=True)
+    sentinel = "SENTINEL_FROZEN_PROMPT_본문\n"
+    (prompts / "summarize_video.md").write_text(sentinel, encoding="utf-8")
+    monkeypatch.setattr(S.sys, "frozen", True, raising=False)
+    monkeypatch.setattr(S.sys, "_MEIPASS", str(tmp_path / "mei"), raising=False)
+    assert S._load_summary_prompt() == sentinel
+    S._load_summary_prompt.cache_clear()   # 후속 테스트 오염 방지
+
+
+def test_source_prompt_loads_real_file(monkeypatch):
+    # 비frozen(소스) → 모듈 dir/prompts 로드·무회귀(실제 프롬프트 비어있지 않음)
+    S._load_summary_prompt.cache_clear()
+    monkeypatch.setattr(S.sys, "frozen", False, raising=False)
+    text = S._load_summary_prompt()
+    assert isinstance(text, str) and len(text) > 0
+    S._load_summary_prompt.cache_clear()
+
+
+# ── Phase 5 CK-2: preflight 해석-인지 화해(_ytdlp_ready·번들 회귀차단) ──
+
+def test_preflight_accepts_bundled_ytdlp_via_env(monkeypatch, tmp_path):
+    # CK-2/AC-1: 번들 시 yt-dlp 는 PATH 에 없고 YTDLP_PATH(절대경로)로만 존재 →
+    # preflight 가 _shutil_which("yt-dlp")==None 으로 오탐 거부하면 안 됨(해석-인지)
+    ytdlp = tmp_path / "yt-dlp"
+    ytdlp.write_text("#!bundled")
+    monkeypatch.setenv("YTDLP_PATH", str(ytdlp))
+    monkeypatch.setattr(S, "_shutil_which", lambda c: None)   # PATH 에 yt-dlp 없음(번들 모사)
+    assert S._ytdlp_ready() is True                           # env 절대경로 존재 → ready
+
+
+def test_preflight_rejects_missing_bundled_ytdlp(monkeypatch, tmp_path):
+    # CK-2: YTDLP_PATH 가 실존 안 하면 ready=False(정직 실패·silent 통과 0)
+    monkeypatch.setenv("YTDLP_PATH", str(tmp_path / "nonexistent-yt-dlp"))
+    monkeypatch.setattr(S, "_shutil_which", lambda c: None)
+    assert S._ytdlp_ready() is False
+
+
+def test_preflight_source_uses_path_which(monkeypatch):
+    # CK-2/AC-6 무회귀: 무env(소스) → _ytdlp_bin()="yt-dlp"(비절대) → 기존 _shutil_which 경로
+    monkeypatch.delenv("YTDLP_PATH", raising=False)
+    monkeypatch.setattr(S.sys, "frozen", False, raising=False)
+    monkeypatch.setattr(S, "_shutil_which",
+                        lambda c: "/usr/bin/yt-dlp" if c == "yt-dlp" else None)
+    assert S._ytdlp_ready() is True
+    monkeypatch.setattr(S, "_shutil_which", lambda c: None)
+    assert S._ytdlp_ready() is False

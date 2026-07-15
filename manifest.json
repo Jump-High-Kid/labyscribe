@@ -1,0 +1,44 @@
+{
+  "manifest_version": "0.3",
+  "name": "labyscribe",
+  "display_name": "labyscribe",
+  "version": "0.0.1",
+  "description": "로컬 MCP: 유튜브 자막을 결정론적으로 추출·페이징하고 요약 프롬프트 계약을 제공한다(요약은 호스트가 수행).",
+  "author": {
+    "name": "Jump-High-Kid"
+  },
+  "license": "MIT",
+  "server": {
+    "type": "binary",
+    "entry_point": "labyscribe",
+    "mcp_config": {
+      "command": "${__dirname}/labyscribe",
+      "env": {
+        "OUTPUT_DIR": "${user_config.output_dir}",
+        "YTDLP_PATH": "${__dirname}/yt-dlp"
+      }
+    }
+  },
+  "tools": [
+    {
+      "name": "extract_transcript",
+      "description": "유튜브 URL 에서 자막 transcript 를 추출(원어 우선·긴 영상은 페이징)."
+    },
+    {
+      "name": "get_transcript_part",
+      "description": "페이징된 transcript 의 k 번째(1-based) part 를 조회."
+    }
+  ],
+  "user_config": {
+    "output_dir": {
+      "type": "directory",
+      "title": "저장 위치",
+      "description": "추출한 자막 원본·transcript 를 저장할 로컬 폴더.",
+      "default": "${HOME}/labyscribe",
+      "required": false
+    }
+  },
+  "compatibility": {
+    "platforms": ["darwin"]
+  }
+}

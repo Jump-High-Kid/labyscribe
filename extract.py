@@ -350,12 +350,31 @@ def parse_vtt(raw, marker_interval=600):
 
 # ── 오케스트레이션 (subprocess — 단위테스트 밖, e2e 검증) ──────────
 
+def _ytdlp_bin() -> str:
+    """yt-dlp 실행 경로 해석 — 소스/번들 양립. raise 금지·항상 str(호출시점 계산).
+
+    해석순서: ① env YTDLP_PATH(명시 오버라이드·.mcpb manifest·테스트 seam·최우선)
+    ② frozen 인접(sys.executable dir → _MEIPASS = onedir sibling·onefile 양쪽)
+    ③ "yt-dlp" 리터럴(subprocess 가 PATH 해석·소스/개발).
+    """
+    override = os.environ.get("YTDLP_PATH")
+    if override:
+        return override
+    if getattr(sys, "frozen", False):
+        for base in (os.path.dirname(sys.executable), getattr(sys, "_MEIPASS", None)):
+            if base:
+                cand = os.path.join(base, "yt-dlp")
+                if os.path.exists(cand):
+                    return cand
+    return "yt-dlp"
+
+
 def run_ytdlp_json(url):
     # --no-playlist: 단일 영상만(플레이리스트/채널 자원 고갈 차단·D-K).
     # run_capped 경유(-J stdout tempfile 리다이렉트·64MB 캡 초과 시 None·메모리 축적 차단).
     # timeout: 무한 블로킹 차단 → TimeoutExpired 를 RuntimeError 로 승격하면
     # main/run_extract 의 _RETRYABLE("timed out") 분류로 DOWNLOAD_FAILED 처리.
-    argv = ["yt-dlp", "-J", "--no-warnings", "--no-playlist", "--", url]
+    argv = [_ytdlp_bin(), "-J", "--no-warnings", "--no-playlist", "--", url]
     try:
         rc, out, err = storage.run_capped(
             argv, timeout=DOWNLOAD_TIMEOUT_SEC, want_stdout=True,
@@ -384,7 +403,7 @@ def download_sub(url, tag, outdir, vid, fmt="vtt", retries=3):
     지수 백오프 재시도(최대 retries회·상한 60s).
     """
     expected = os.path.join(outdir, "%s.%s.%s" % (vid, tag, fmt))
-    argv = ["yt-dlp", "--write-subs", "--write-auto-subs", "--skip-download",
+    argv = [_ytdlp_bin(), "--write-subs", "--write-auto-subs", "--skip-download",
             "--no-playlist", "--sub-langs", tag, "--sub-format", fmt,
             "--max-filesize", str(SUBTITLE_FILE_MAX_BYTES),
             "-o", os.path.join(outdir, "%(id)s.%(ext)s"), "--", url]

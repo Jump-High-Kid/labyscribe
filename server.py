@@ -39,6 +39,7 @@ from extract import (
     EXIT_STORAGE_LIMIT,
     EXIT_SUBTITLE_TOO_LARGE,
     EXIT_UNAVAILABLE,
+    _ytdlp_bin,
     run_extract,
 )
 from handles import HandleRegistry, content_hash
@@ -134,10 +135,10 @@ def _assemble(handle: str, meta: dict, parts, part_index: int) -> dict:
 # ── 툴 본체(plain) — SDK 우회 계약 테스트 표적 ──────────────────
 
 def _do_extract(url: str, lang: Optional[str] = None) -> dict:
-    # 1) yt-dlp preflight(run_extract 밖·AC-5·테스트 결정성)
-    if _shutil_which("yt-dlp") is None:
+    # 1) yt-dlp preflight(run_extract 밖·AC-5·테스트 결정성) — 해석-인지(번들 회귀차단·CK-2)
+    if not _ytdlp_ready():
         return _err("TOOLING_MISSING",
-                    "yt-dlp 실행 파일을 PATH 에서 찾을 수 없습니다. 설치 후 재시도.")
+                    "yt-dlp 실행 파일을 찾을 수 없습니다. 설치 후 재시도.")
     # 2) 입력 검증(단일 영상·길이)
     input_err = _validate_input(url)
     if input_err is not None:
@@ -185,10 +186,29 @@ def _shutil_which(cmd: str):
     return shutil.which(cmd)
 
 
+def _ytdlp_ready() -> bool:
+    """yt-dlp 실행 가능 여부 — 해석된 경로(_ytdlp_bin) 기준. raise 금지.
+
+    절대경로(번들 env/frozen 인접) → 존재확인 / 비절대("yt-dlp" 소스 폴백) → PATH.
+    번들 실행 시 yt-dlp 는 PATH 에 없으므로 `_shutil_which("yt-dlp")` 만으론 오탐 거부(CK-2).
+    """
+    p = _ytdlp_bin()
+    if os.path.isabs(p):
+        return os.path.exists(p)
+    return _shutil_which(p) is not None
+
+
+def _resource_dir() -> str:
+    """번들 리소스 base — frozen(PyInstaller)이면 _MEIPASS, 아니면 소스 dir. raise 금지."""
+    src = os.path.dirname(os.path.abspath(__file__))
+    if getattr(sys, "frozen", False):
+        return getattr(sys, "_MEIPASS", src)
+    return src
+
+
 @lru_cache(maxsize=1)
 def _load_summary_prompt() -> str:
-    path = os.path.join(os.path.dirname(os.path.abspath(__file__)),
-                        "prompts", "summarize_video.md")
+    path = os.path.join(_resource_dir(), "prompts", "summarize_video.md")
     with open(path, encoding="utf-8") as f:
         return f.read()
 
