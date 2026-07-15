@@ -381,14 +381,73 @@ def test_subtitle_too_large_rejects(monkeypatch, tmp_path):
     assert not glob.glob(os.path.join(out, "**", "transcript.txt"), recursive=True)
 
 
-def test_unsafe_video_id_raises(monkeypatch, tmp_path):
-    # CK-6/AC-6: is_safe_component 사전거름 — 경로이탈 vid → OSError(→OUTPUT_WRITE_FAILED)
+def test_unsafe_video_id_returns_bad_input(monkeypatch, tmp_path):
+    # Phase 4 CK-8/AC-3: 경로이탈 vid → 진입 allowlist 위반 → EXIT_BAD_INPUT 구조화 반환
+    # (크래시·OSError 오분류 금지·silent-failure 0). 저장본·경로이탈 dir 생성 0.
     out = str(tmp_path / "out")
     _fake_info(monkeypatch, _info(vid="../evil", subs={"en": [{}]}))
     monkeypatch.setattr(E, "download_sub", _fake_dl_ok)
-    with pytest.raises(OSError):
-        E.run_extract(VALID_URL, None, out)
+    r = E.run_extract(VALID_URL, None, out)
+    assert r.exit_code == E.EXIT_BAD_INPUT
+    assert r.transcript is None
     assert not os.path.isdir(os.path.join(out, "..", "evil"))
+    assert not glob.glob(os.path.join(out, "**", "transcript.txt"), recursive=True)
+
+
+# ── Phase 4 P4-c: playlist/channel 타입거부(info _type/entries) → EXIT_BAD_INPUT ──
+
+def test_playlist_type_rejected_no_storage(monkeypatch, tmp_path):
+    # CK-6/AC-5: info _type=="playlist" → EXIT_BAD_INPUT · 저장본 0
+    out = str(tmp_path / "out")
+    info = _info(subs={"en": [{}]})
+    info["_type"] = "playlist"
+    _fake_info(monkeypatch, info)
+    monkeypatch.setattr(E, "download_sub", _fake_dl_ok)
+    r = E.run_extract(VALID_URL, None, out)
+    assert r.exit_code == E.EXIT_BAD_INPUT
+    assert not glob.glob(os.path.join(out, "**", "transcript.txt"), recursive=True)
+
+
+def test_channel_entries_rejected_no_storage(monkeypatch, tmp_path):
+    # CK-6/AC-5: info entries 존재(채널) → EXIT_BAD_INPUT · 저장본 0
+    out = str(tmp_path / "out")
+    info = _info(subs={"en": [{}]})
+    info["entries"] = [{"id": "x"}]
+    _fake_info(monkeypatch, info)
+    monkeypatch.setattr(E, "download_sub", _fake_dl_ok)
+    r = E.run_extract(VALID_URL, None, out)
+    assert r.exit_code == E.EXIT_BAD_INPUT
+    assert not glob.glob(os.path.join(out, "**", "transcript.txt"), recursive=True)
+
+
+# ── Phase 4 P4-d: cookies 미전달 회귀(yt-dlp argv flag 부재·AC-7/CK-11) ──
+
+def test_ytdlp_info_argv_has_no_cookies(monkeypatch):
+    # 정보수집 argv 에 --cookies/--cookies-from-browser 부재(브라우저 세션 유출 차단)
+    captured = {}
+
+    def fake(argv, **kw):
+        captured["argv"] = argv
+        return (0, b'{"id": "vidOK"}', "")
+    monkeypatch.setattr(E.storage, "run_capped", fake)
+    E.run_ytdlp_json(VALID_URL)
+    assert "--cookies" not in captured["argv"]
+    assert "--cookies-from-browser" not in captured["argv"]
+
+
+def test_download_sub_argv_has_no_cookies(monkeypatch, tmp_path):
+    # 자막 다운로드 argv 에 --cookies/--cookies-from-browser 부재
+    captured = {}
+
+    def fake(argv, **kw):
+        captured["argv"] = argv
+        (tmp_path / "vidX.en.vtt").write_text("WEBVTT\n", encoding="utf-8")
+        return (0, None, "")
+    monkeypatch.setattr(E.storage, "run_capped", fake)
+    monkeypatch.setattr(E.time, "sleep", lambda *a: None)
+    E.download_sub(VALID_URL, "en", str(tmp_path), "vidX")
+    assert "--cookies" not in captured["argv"]
+    assert "--cookies-from-browser" not in captured["argv"]
 
 
 def test_missing_video_id_returns_unavailable(monkeypatch, tmp_path):

@@ -78,9 +78,32 @@ def validate_url(url):
     p = urlparse(url)
     if p.scheme != "https":
         raise ValueError("https 스킴만 허용: %r" % url)
-    if p.hostname not in ALLOWED_HOSTS:
-        raise ValueError("유튜브 도메인만 허용(SSRF 차단): host=%r" % p.hostname)
+    host = p.hostname                                    # urlparse 가 이미 소문자화
+    if not host or not host.isascii():                   # None/빈/non-ASCII(호모글리프) 거부
+        raise ValueError("ASCII 유튜브 호스트만 허용: host=%r" % host)
+    if any(lbl.startswith("xn--") for lbl in host.split(".")):   # punycode IDN 거부
+        raise ValueError("punycode(xn--) 호스트 거부: host=%r" % host)
+    host = host.rstrip(".")                              # FQDN trailing-dot 정규화
+    if host not in ALLOWED_HOSTS:
+        raise ValueError("유튜브 도메인만 허용(SSRF 차단): host=%r" % host)
     return url
+
+
+def is_allowed_id(vid: str) -> bool:
+    """진입층 positive allowlist — yt-dlp info 응답값(신뢰경계 밖). raise 금지.
+
+    `re.fullmatch`(=`\\A…\\Z`) — `^…$` 금지: `$`는 최종 `\\n` 직전에도 매칭돼
+    `vid="abc\\n…"` 개행 주입 구멍이 된다. 상한 64 = YouTube 11자 여유(잠정·Phase 6).
+    """
+    return re.fullmatch(r"[A-Za-z0-9_-]{1,64}", vid) is not None
+
+
+def is_allowed_tag(tag: str) -> bool:
+    """진입층 positive allowlist — 자막 언어 태그(version_dir_name 리프명 load-bearing).
+
+    상한 35 = `es-419`·`zh-Hans-CN`·`en-orig` 커버(digit 필수·잠정·Phase 6). raise 금지.
+    """
+    return re.fullmatch(r"[A-Za-z0-9_-]{1,35}", tag) is not None
 
 
 def _norm(tag):
@@ -422,6 +445,13 @@ def run_extract(url, lang, output_root):
             EXIT_UNAVAILABLE,
             "UNAVAILABLE 영상 접근 불가(비공개/삭제/지역/연령 등).", {}, None)
 
+    # ②' playlist/channel 타입 거부 — --no-playlist(백스톱) + info 타입검사. vid 추출 전
+    #     (단일영상 info 엔 entries 부재 → .get→None). 위반은 구조화 분류(크래시 아님).
+    if info.get("_type") == "playlist" or info.get("entries") is not None:
+        return ExtractResult(EXIT_BAD_INPUT,
+                             "BAD_INPUT 재생목록/채널 URL 은 지원하지 않습니다(단일 영상만).",
+                             {}, None)
+
     # ③ vid·langs·orig·meta 조립
     vid = info.get("id")
     if not vid:                            # id 누락 = 정보 계약 위반 → None/ 저장본 생성 차단
@@ -445,9 +475,12 @@ def run_extract(url, lang, output_root):
                              "NO_SUBTITLE 자막 트랙 없음. id=%s" % vid, meta, None)
     tag, is_auto, translated = sel
 
-    # ⑤ 경로 성분 안전성(traversal 필수차단) — 위반은 OSError→server OUTPUT_WRITE_FAILED
-    if not (storage.is_safe_component(str(vid)) and storage.is_safe_component(tag)):
-        raise OSError("안전하지 않은 경로 성분: vid=%r tag=%r" % (vid, tag))
+    # ⑤ 진입층 positive allowlist(신뢰경계 밖 info 값) — 위반은 구조화 분류(크래시·OSError
+    #    아님·silent-failure 0). 진짜 traversal 최종벨트 = storage realpath containment(존치).
+    if not (is_allowed_id(str(vid)) and is_allowed_tag(tag)):
+        return ExtractResult(EXIT_BAD_INPUT,
+                             "BAD_INPUT 안전하지 않은 id/tag: vid=%r tag=%r" % (vid, tag),
+                             {}, None)
 
     # ⑥ 캐시조회(다운로드 전) — 완결 저장본 있으면 자막 다운로드 스킵(D3-C)
     cached = storage.find_cached(root, str(vid), tag)

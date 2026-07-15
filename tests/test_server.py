@@ -5,6 +5,7 @@ CK-30(핸들 거부)·CK-31(에러 매핑·미노출)·CK-36(입력검증)·CK-3
 통합: CK-33(핸드셰이크 + SDK 경유 성공1·에러1·페이징·JSON 직렬화).
 """
 import asyncio
+import inspect
 import json
 
 import pytest
@@ -285,6 +286,26 @@ def test_sdk_smoke_handshake_and_tool_calls(monkeypatch, tmp_path):
             assert err["error"]["code"] == "PLAYLIST_UNSUPPORTED"
 
     asyncio.run(scenario())
+
+
+# ── Phase 4 AC-6/CK-10: 도구표면 blast-radius 0 계약 ────────────
+
+def test_exposed_tools_blast_radius_zero(monkeypatch, tmp_path):
+    # 노출 도구 2개 = 파일경로 인자 미수신·핸들경유·읽기전용(8필드 투영).
+    # ① 시그니처: 예상 인자만·파일경로/디렉토리 계열 이름 부재
+    assert set(inspect.signature(S.extract_transcript).parameters) == {"url", "lang"}
+    assert (set(inspect.signature(S.get_transcript_part).parameters)
+            == {"transcript_handle", "part"})
+    pathish = ("path", "file", "dir", "output", "outdir", "root")
+    for fn in (S.extract_transcript, S.get_transcript_part):
+        for name in inspect.signature(fn).parameters:
+            assert not any(tok in name.lower() for tok in pathish), name
+    # ② get_transcript_part 는 핸들 경유만 — 임의 경로 문자열은 파일 접근 없이 INVALID_HANDLE
+    _prep(monkeypatch, tmp_path, lambda u, l, o: _ok_result())
+    for evil in ("/etc/passwd", "../../secret.txt", str(tmp_path / "x")):
+        assert S._do_get_part(evil, 1)["error"]["code"] == "INVALID_HANDLE"
+    # ③ 성공 응답은 8필드 allowlist 투영만(경로·내부키 유출 0·읽기전용)
+    assert set(S._do_extract(VALID_URL).keys()) == _SCHEMA_KEYS
 
 
 # ── CK-31 malformed URL(urlparse 예외)도 구조화 계약 안으로 ──────
