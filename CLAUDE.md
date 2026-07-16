@@ -27,7 +27,7 @@ labyscribe = 개인 "영상요약" 스킬의 **로컬 MCP 공유 에디션**. �
 2. 원본 스킬 설계: `Labylinx/docs/superpowers/specs/2026-07-13-video-summary-skill-design.md` (v3 · "무손실" 정의 = 원본 불변 보존)
 3. Phase별 설계의도·구현노트: 이 repo `.harness/design_intend*.md`, `.harness/impl_notes.md`
 
-**로드맵 현황**: Phase 0(추출 코어)·Phase 1(`parse_vtt`)·Phase 2(MCP stdio 서버)·Phase 3(저장 안전) **완료** · Phase 4(보안 경화)~Phase 6(E2E) 대기.
+**로드맵 현황**: Phase 0~6 **완료·로드맵 완주**(추출 코어·`parse_vtt`·MCP 서버·저장 안전·보안 경화·패키징·Windows CI·E2E 인수). 남은 건 v2(원격 MCP·폰/ChatGPT 도달) · E2E 자율호출 실증만 데스크톱 대기(`docs/E2E-CHECKLIST.md`).
 
 ## 명령어
 
