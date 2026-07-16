@@ -38,16 +38,16 @@ EXIT_EMPTY_TRANSCRIPT = 6 # 자막 트랙은 받았으나 정제 결과 무효(�
 EXIT_STORAGE_LIMIT = 7    # 저장 디스크 총량 HARD 상한 초과(신규추출 거부·기존본 삭제 0)
 EXIT_SUBTITLE_TOO_LARGE = 8  # 다운로드 자막 파일이 하드캡 초과(읽기 전 삭제·메모리 백스톱)
 
-# 다운로드 subprocess 타임아웃(초) — 무한 블로킹 차단(D-K·CK-37). 잠정값·실측 Phase 6.
+# 다운로드 subprocess 타임아웃(초) — 무한 블로킹 차단(D-K·CK-37). backstop·확정(근거표 W3 참조).
 DOWNLOAD_TIMEOUT_SEC = 300
 
-# 정책 상한(잠정 고정 상수·YAGNI·실측 Phase 6). server MAX_SUBTITLE_BYTES(transcript 후처리)
+# 정책 상한(backstop·확정·근거표 W3 참조). server MAX_SUBTITLE_BYTES(transcript 후처리)
 # 와 구분 — 이건 raw 자막 파일 자체의 stat 상한.
 SUBTITLE_FILE_MAX_BYTES = 32 * 1024 * 1024   # raw 자막 파일 하드캡(다운로드 후 stat·32MB)
 DISK_SOFT_BYTES = 2 * 1024 * 1024 * 1024     # 저장 루트 총량 경고선(2GB)
 DISK_HARD_BYTES = 5 * 1024 * 1024 * 1024     # 저장 루트 총량 거부선(5GB·신규추출 차단)
 
-# run_ytdlp_json 의 -J stdout 캡(초과 시 정보 과대로 중단·메모리 축적 차단). 잠정·Phase 6.
+# run_ytdlp_json 의 -J stdout 캡(초과 시 정보 과대로 중단·메모리 축적 차단). backstop·확정(근거표 W3).
 _INFO_STDOUT_CAP_BYTES = 64 * 1024 * 1024
 _STDERR_CAP_BYTES = 8 * 1024
 
@@ -93,7 +93,7 @@ def is_allowed_id(vid: str) -> bool:
     """진입층 positive allowlist — yt-dlp info 응답값(신뢰경계 밖). raise 금지.
 
     `re.fullmatch`(=`\\A…\\Z`) — `^…$` 금지: `$`는 최종 `\\n` 직전에도 매칭돼
-    `vid="abc\\n…"` 개행 주입 구멍이 된다. 상한 64 = YouTube 11자 여유(잠정·Phase 6).
+    `vid="abc\\n…"` 개행 주입 구멍이 된다. 상한 64 = YouTube 11자 여유(backstop·근거표 W3).
     """
     return re.fullmatch(r"[A-Za-z0-9_-]{1,64}", vid) is not None
 
@@ -101,7 +101,7 @@ def is_allowed_id(vid: str) -> bool:
 def is_allowed_tag(tag: str) -> bool:
     """진입층 positive allowlist — 자막 언어 태그(version_dir_name 리프명 load-bearing).
 
-    상한 35 = `es-419`·`zh-Hans-CN`·`en-orig` 커버(digit 필수·잠정·Phase 6). raise 금지.
+    상한 35 = `es-419`·`zh-Hans-CN`·`en-orig` 커버(digit 필수·backstop·근거표 W3). raise 금지.
     """
     return re.fullmatch(r"[A-Za-z0-9_-]{1,35}", tag) is not None
 

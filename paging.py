@@ -13,7 +13,7 @@ from __future__ import annotations
 
 import re
 
-# 파트 바이트 상한 — D-G 잠정값. 호스트별 실측·매트릭스는 Phase 6. 설정 가능성=YAGNI(고정).
+# 파트 바이트 상한(tuned·확정) — 실측 밀도 891B/분 → 48KB≈55분/1파트. 근거표 W3 §PART_LIMIT 참조.
 PART_LIMIT_BYTES = 48 * 1024
 
 # 10분 마커 = 대괄호 안 HH:MM:SS 만인 줄. `[Music]`·`[Applause]` 등 음향이벤트는 마커 아님.

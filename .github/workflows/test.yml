@@ -1,0 +1,34 @@
+name: test
+
+# labyscribe 결정적 pytest 게이트 (Phase 6 · W6)
+# ubuntu-latest 러너에서 online 제외 pytest 를 돌려 회귀를 CI 가 차단.
+# build.yml(win 아티팩트 생산)과 별도 파일 — 단일책임 분리(architect 확정).
+# env(LABYSCRIBE_ONLINE) 미설정 → tests/conftest.py online gate 가 online 테스트 자동 제외.
+# 러너에 yt-dlp 미설치라 online 미실행 이중 안전.
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+# GITHUB_TOKEN 최소권한 — 테스트는 쓰기 권한 불요. fork PR 도 읽기전용.
+permissions:
+  contents: read
+
+jobs:
+  pytest:
+    runs-on: ubuntu-latest
+    steps:
+      # actions 는 commit SHA 로 고정(provenance 정책·build.yml 과 동일 SHA). 갱신은 버전 주석 참조.
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0  # v7.0.0
+
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1  # v6.3.0
+        with:
+          python-version: '3.12'
+
+      - name: install dev extras
+        run: pip install -e ".[dev]"
+
+      # env 미설정 → online 자동 제외(결정적 테스트만). CK-1 게이트 재사용.
+      - name: pytest
+        run: pytest
