@@ -22,12 +22,14 @@ case "$TARGET_OS" in
     YTDLP_ASSET="yt-dlp_macos"
     YTDLP_OUTBIN="yt-dlp"
     YTDLP_SHA256="498bd0dae17855c599d371d68ec5bafc439a9d8640e838be25c765a9792f261b"
-    CHECK_UNIVERSAL2=1 ;;
+    CHECK_UNIVERSAL2=1
+    SHA_CMD="shasum -a 256" ;;   # macOS(BSD) = shasum(sha256sum 부재)
   windows)
     YTDLP_ASSET="yt-dlp.exe"
     YTDLP_OUTBIN="yt-dlp.exe"
     YTDLP_SHA256="52fe3c26dcf71fbdc85b528589020bb0b8e383155cfa81b64dd447bbe35e24b8"
-    CHECK_UNIVERSAL2=0 ;;
+    CHECK_UNIVERSAL2=0
+    SHA_CMD="sha256sum" ;;   # windows git bash = coreutils sha256sum(shasum 부재 — CI 실측)
   *)
     echo "ERROR: 미지원 TARGET_OS=$TARGET_OS (macos|windows)"; exit 1 ;;
 esac
@@ -40,7 +42,7 @@ trap 'rm -rf "$WORK"' EXIT
 
 # ── preflight (win git bash 존재 계약 명시 — CK-14) ──
 command -v gpg    >/dev/null || { echo "ERROR: gpg 없음(PATH 확인)"; exit 1; }
-command -v shasum >/dev/null || { echo "ERROR: shasum 없음(PATH 확인)"; exit 1; }
+command -v ${SHA_CMD%% *} >/dev/null || { echo "ERROR: ${SHA_CMD%% *} 없음(PATH 확인)"; exit 1; }
 command -v curl   >/dev/null || { echo "ERROR: curl 없음(PATH 확인)"; exit 1; }
 [ -f "$KEY_ASC" ] || { echo "ERROR: 서명 공개키 없음: $KEY_ASC"; exit 1; }
 
@@ -61,11 +63,11 @@ gpg --batch --status-fd 1 --verify "$WORK/SHA2-256SUMS.sig" "$WORK/SHA2-256SUMS"
   || { echo "ERROR: SHA2-256SUMS 서명이 고정 키와 불일치 — 중단"; exit 1; }
 
 echo "[3/4] SHA256 체크섬 검증 (고정값 + 릴리스 목록 이중)"
-ACTUAL="$(shasum -a 256 "$WORK/$YTDLP_ASSET" | awk '{print $1}')"
+ACTUAL="$($SHA_CMD "$WORK/$YTDLP_ASSET" | awk '{print $1}')"
 [ "$ACTUAL" = "$YTDLP_SHA256" ] \
   || { echo "ERROR: $YTDLP_ASSET SHA256 불일치 (기대 $YTDLP_SHA256 / 실제 $ACTUAL) — 중단"; exit 1; }
 # 자산명 필드 완전일치(awk $2==) — grep 정규식의 '.' 메타문자 오탐 회피(yt-dlp.exe)
-( cd "$WORK" && awk -v a="$YTDLP_ASSET" '$2==a' SHA2-256SUMS | shasum -a 256 -c - )
+( cd "$WORK" && awk -v a="$YTDLP_ASSET" '$2==a' SHA2-256SUMS | $SHA_CMD -c - )
 
 echo "[4/4] 검증 통과분 배치 → $OUT_DIR/$YTDLP_OUTBIN"
 mkdir -p "$OUT_DIR"
