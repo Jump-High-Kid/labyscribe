@@ -12,6 +12,9 @@ out/
 *.mcpb
 *.egg-info/
 
+# 세션 핸드오프 미러(/저장-ls 산출물 · 사람용 · 코드 아님)
+/NEXT_SESSION.md
+
 # 하네스 run 산출물 — harness-adr.yaml(영구 ADR)만 예외로 tracked
 .harness/*
 !.harness/harness-adr.yaml
