@@ -36,13 +36,15 @@ TARGET_OS=windows bash "$ROOT/build/fetch_ytdlp.sh" "$ROOT/build/vendor"
 
 echo "── [3/6] PyInstaller onedir (win-x64) ──"
 rm -rf "$ROOT/build/pyi" "$ROOT/dist"
+# 경로 인자는 상대경로(cwd=$ROOT) — MSYS 경로(/d/a/…)를 네이티브 Windows python 이 \d\a\… 로
+# 오해해 파일을 못 찾는 문제 회피(cygpath 대신 상대경로가 이식적).
 "$VPY" -m PyInstaller --noconfirm --clean \
   --name labyscribe --onedir \
-  --distpath "$ROOT/dist" --workpath "$ROOT/build/pyi" --specpath "$ROOT/build/pyi" \
-  --add-data "$ROOT/prompts;prompts" \
+  --distpath dist --workpath build/pyi --specpath build/pyi \
+  --add-data "prompts;prompts" \
   --collect-submodules mcp.server --collect-data mcp --copy-metadata mcp \
   --collect-all pydantic --collect-submodules pydantic_core --copy-metadata pydantic \
-  "$ROOT/server.py"
+  server.py
 # mcp 는 collect-all 금지 — mcp.cli 가 선택적 typer 를 import 해 수집 중 실패(stdio 서버만 사용).
 # --add-data 는 win os.pathsep 세미콜론(';') — macOS 콜론(':')은 win 에서 깨진다.
 
