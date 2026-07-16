@@ -1,0 +1,41 @@
+name: build
+
+# labyscribe Windows(win-x64) .mcpb CI 빌드 (Phase 5.x)
+# windows-latest 러너에서 build/build_windows.sh 를 돌려 labyscribe-win.mcpb 를 artifact 로 업로드.
+# 실빌드 검증은 이 CI 전용(win-x64 PyInstaller 바이너리는 Windows 실행 환경 필수).
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+# GITHUB_TOKEN 최소권한(codex H1) — 빌드는 쓰기 권한 불요. fork PR 도 읽기전용.
+permissions:
+  contents: read
+
+jobs:
+  windows:
+    runs-on: windows-latest
+    steps:
+      # actions 는 commit SHA 로 고정(codex H2 · provenance 정책과 정합). 갱신은 버전 주석 참조.
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0  # v7.0.0
+
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1  # v6.3.0
+        with:
+          python-version: '3.12'
+          architecture: x64
+
+      # gpg 존재를 빌드 전에 결정적으로 확정(codex M5) — 없으면 설치 후 진행.
+      - name: gpg preflight
+        shell: bash
+        run: command -v gpg || choco install gnupg -y
+
+      - name: build Windows .mcpb
+        shell: bash
+        run: bash build/build_windows.sh
+
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a  # v7.0.1
+        with:
+          name: labyscribe-win-mcpb
+          path: labyscribe-win.mcpb
+          if-no-files-found: error

@@ -1,0 +1,5 @@
+# CRLF 차단 — Windows(git bash) CI 에서 셸/워크플로가 CRLF 로 체크아웃되면
+# heredoc·JSON-RPC 스모크·bash 파싱이 조용히 깨진다(labyscribe Phase 5.x).
+*.sh   text eol=lf
+*.yml  text eol=lf
+*.yaml text eol=lf
