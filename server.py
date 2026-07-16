@@ -11,7 +11,7 @@ labyscribe 는 요약을 하지 않는다("무료 메커니즘"). 이 서버는 
 - env 결합(`OUTPUT_DIR`)은 `_resolve_output_dir` 경계에만(D-E).
 - 순수코어(paging·handles) vs I/O셸(server·extract) 경계.
 
-자원 한도 상수(잠정값 · 단일사용자 로컬 위협모델 기준 · 실측·매트릭스 = Phase 6):
+자원 한도 상수(backstop·확정 · 단일사용자 로컬 위협모델 기준 · 근거표 = design_intend-phase6 §W3):
 - MAX_URL_LEN: 입력 URL 길이 상한(비정상 입력 차단).
 - MAX_SUBTITLE_BYTES: server 가 페이징·반환할 transcript 최대 바이트(메모리/폭주 방지).
 - MAX_PARTS: 페이징 파트 수 상한(위 바이트 상한의 백스톱).
@@ -45,21 +45,21 @@ from extract import (
 from handles import HandleRegistry, content_hash
 from paging import PART_LIMIT_BYTES, split_transcript
 
-# ── 자원 한도(잠정·고정 상수·YAGNI) ────────────────────────────
+# ── 자원 한도(backstop·확정·근거표 W3) ────────────────────────────
 MAX_URL_LEN = 2048                       # 표준 URL 길이 sanity 상한
-MAX_SUBTITLE_BYTES = 4 * 1024 * 1024     # 서버가 다루는 transcript 최대 4MB(잠정)
-MAX_PARTS = 256                          # 페이징 파트 수 상한(백스톱·잠정)
+MAX_SUBTITLE_BYTES = 4 * 1024 * 1024     # 서버가 다루는 transcript 최대 4MB(backstop·근거표 W3)
+MAX_PARTS = 256                          # 페이징 파트 수 상한(backstop·근거표 W3)
 
 # _assemble 응답 오버헤드(handle·title·channel·JSON 구조) 여유 차감 — transcript 를
 # PART_LIMIT_BYTES 그대로 담으면 필드·직렬화가 얹혀 실제 반환이 상한을 넘는다(CK-28·D-G).
-# transcript 예산 = 파트 상한 − 오버헤드. 실측은 Phase 6.
+# transcript 예산 = 파트 상한 − 오버헤드(backstop·근거표 W3).
 _RESPONSE_OVERHEAD_BYTES = 4 * 1024
 _TRANSCRIPT_PART_BUDGET = PART_LIMIT_BYTES - _RESPONSE_OVERHEAD_BYTES
 
 _DEFAULT_OUTPUT_DIR = "~/labyscribe"
 
 # 서버 시작 시 stale temp 정리 임계 — 최대 추출시간(타임아웃 × (재시도+1)) 여유. 이보다
-# 오래된 <root>/.tmp/* 만 삭제(라이브 temp 보존·codex HIGH). 잠정·실측 Phase 6.
+# 오래된 <root>/.tmp/* 만 삭제(라이브 temp 보존·codex HIGH). backstop·확정(근거표 W3).
 _STALE_TEMP_MAX_AGE_SEC = DOWNLOAD_TIMEOUT_SEC * 8
 
 # exit code → 구조화 에러 code (D-H). 미분류는 UNKNOWN_DOWNLOAD_FAILURE 폴백.

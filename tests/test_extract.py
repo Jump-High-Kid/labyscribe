@@ -169,6 +169,14 @@ class TestSelectTrack(unittest.TestCase):
                 "automatic_captions": {"en-US": [{}], "ko": [{}]}}
         self.assertEqual(E.select_track(info, ["ko"]), ("en-US", True, False))
 
+    # ── Phase 6 대표군(다국어): 원어 수동자막이 선호언어보다 우선(자동번역 이중손실 회피) ──
+    def test_representative_multilang_prefers_original_over_requested(self):
+        # 원어=ja·수동자막 {ja,en} 존재·prefer=[en] → 원어 ja 를 뽑아 호스트가 번역케 함
+        # (en 을 바로 주면 자동번역본을 다시 번역하는 이중손실). translated=False.
+        info = {"language": "ja",
+                "subtitles": {"ja": [{}], "en": [{}]}, "automatic_captions": {}}
+        self.assertEqual(E.select_track(info, ["en"]), ("ja", False, False))
+
 
 class TestCleanSrt(unittest.TestCase):
     def test_rolling_dedup_and_tag_strip_and_marker(self):

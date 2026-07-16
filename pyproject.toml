@@ -13,3 +13,7 @@ dev = ["pytest"]
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 pythonpath = ["."]
+markers = [
+  "online: 실 네트워크 필요(기본 제외·LABYSCRIBE_ONLINE=1 로 활성)",
+  "smoke: 실영상 통합 스모크",
+]

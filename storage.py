@@ -9,7 +9,7 @@ extract.py 의 2층 규율을 계승한다:
 
 저장 안전 = 불변 버전 디렉토리(`<root>/<video_id>/<tag>-<hash>/`) + temp→디렉토리째
 atomic rename(부분 손상 창 0) + 0700 + O_NOFOLLOW + realpath containment + fsync.
-fsync 수준 = os.fsync(크래시 일관성)·F_FULLFSYNC(전원손실 완전내구)는 Phase 6.
+fsync 수준 = os.fsync(크래시 일관성). F_FULLFSYNC(전원손실 완전내구)=내구성 belt·비례적 잔여로 보류(미구현·타임아웃/총량캡 백스톱 有).
 """
 from __future__ import annotations
 
