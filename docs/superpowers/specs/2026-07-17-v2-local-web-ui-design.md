@@ -66,7 +66,7 @@ labyscribe는 여전히 **추출·정제·프롬프트 계약만** 진다. 요�
 ### 4.1 큰 그림 — 순수 로직 계승 + 오케스트레이션 확장
 ```
 [더블클릭 실행 = webapp 진입점]
-  → 로컬 웹서버 기동 (127.0.0.1:PORT · starlette/uvicorn = 직접 의존 고정 §7)
+  → 로컬 웹서버 기동 (127.0.0.1:PORT · stdlib http.server = 의존 추가 0 §7)
   → webbrowser.open 으로 브라우저 자동 열기
   ┌───────────────────────────────────────┐
   │ 프론트 (정적 HTML/JS · 인라인 or web/static) │
@@ -74,7 +74,7 @@ labyscribe는 여전히 **추출·정제·프롬프트 계약만** 진다. 요�
   └───────────────────────────────────────┘
        ↕ 로컬 HTTP API (JSON · localhost 전용 · nonce 전면)
 [백엔드]
-  · [신규] webapp.py    starlette 라우트 + 서버 기동 + 브라우저 열기 + nonce + 폴더 대화상자 (IO 경계)
+  · [신규] webapp.py    http.server 라우트 + 서버 기동 + 브라우저 열기 + nonce + 폴더 대화상자 (IO 경계)
   · [신규] chapters.py  cue+타임스탬프 → 챕터 경계 분할 (순수함수 · raise 금지)
   · [신규] render_md.py 파트/메타 → 안전한 Markdown 렌더 (순수 · 이스케이프·동적 경계)
   · [확장] extract.py   run_ytdlp_json 에 chapters 수집 추가 · 순수 정제 로직 불변
@@ -88,7 +88,7 @@ labyscribe는 여전히 **추출·정제·프롬프트 계약만** 진다. 요�
 - **순수함수층**(단위테스트·raise 금지):
   - `chapters.split(cues, chapters_meta, byte_cap) → parts[]` — cue의 **타임스탬프를 보존**받아(§5.1) 챕터 경계에 배정. 메타 없음/손상 시 폴백 신호 반환(판정은 상위).
   - `render_md.part(part, meta) → str` — 메타 이스케이프 + **동적 데이터 경계**(§5.3).
-- **오케스트레이션/IO층**: `webapp.py`가 `run_extract`(저장) → `chapters.split` → `render_md` → API 응답 배선. 기존 `ExtractResult.exit_code` 계약을 그대로 에러 매핑에.
+- **오케스트레이션/IO층(정정 — 2026-07-17 구현착수)**: 분할·렌더를 **`run_extract` staging 창 안으로** 접어 넣는다(기본 off 플래그 `emit_markdown`). staging에서 `chapters.split`→`render_md`→세트 완결 후 **디렉토리째 단일 atomic rename**(AC-13). "저장 후 분할"(§4.2 원문)은 금지 — 커밋 후 분할은 증분이 되어 AC-13 위배. `webapp.py`는 `run_extract(emit_markdown=True)` 반환의 `ExtractResult.parts`(메모리)를 서빙만. v1 stdio MCP는 플래그 off라 바이트 동일 격리. 기존 `ExtractResult.exit_code` 계약을 그대로 에러 매핑에.
 
 ### 4.3 API 엔드포인트 (로컬 전용 · JSON · **모든 API에 nonce 필수** · 결과는 result_id 결속)
 | 메서드·경로 | 입력 | 출력(allowlist 투영) |
@@ -110,7 +110,7 @@ labyscribe는 여전히 **추출·정제·프롬프트 계약만** 진다. 요�
 
 ### 5.1 소스·타임스탬프 보존·귀속 규칙
 - `run_ytdlp_json`이 `chapters` 필드(`[{start_time, end_time, title}]`)를 함께 수집.
-- **cue 타임스탬프 보존**: `chapters.split`은 **렌더 이전의 cue 중간모델**(`_parse_vtt_cues`의 `(start, end, text)` 리스트)을 입력. 정제(dedup·시간가드·태그strip)는 cue 모델 위에서 그대로.
+- **cue 타임스탬프 보존(정정 — 2026-07-17)**: `chapters.split`은 **정제 후 cue 중간모델**(`_dedup_rolling` 출력 `(start, text)` **2-튜플**)을 입력. `end`는 귀속·헤더 어디에도 안 쓰이고 `_dedup_rolling`이 이미 end를 버리므로(검증된 dedup 로직 개조 회피) 2-튜플이 실제 arity. 정제(dedup·시간가드·태그strip)는 cue 모델 위에서 그대로.
 - **cue 귀속 규칙(결정적 불변조건 — 정정)**:
   - 경계는 **반개구간** `[start, end)`. cue는 그 **start 시각**이 속한 챕터에 귀속(경계 걸침 모호성 제거).
   - **첫 챕터 이전·마지막 이후·챕터 간 공백**의 cue → **직전(또는 최근접) 챕터**에 흡수, 어디에도 없으면 **폴백 파트**(파트 0 또는 인접)로. → **모든 cue가 정확히 한 파트에 귀속**(무손실·무중복) 보장.
@@ -171,7 +171,7 @@ LABYSCRIBE-DATA-{동적토큰}>>>
 - **폴백: 소스 설치** — `install` 스크립트가 Python≥3.10·yt-dlp 순차 확인·설치.
 - 배포 = **GitHub 릴리스**(심사·조직 불필요). OS별 아티팩트(mac/win).
 - **macOS(정정)**: 미서명 실행파일은 Gatekeeper가 "다운로드→더블클릭"을 차단 → **서명·공증 앱 번들**이 이상적이나(Apple Developer 계정 필요), 그 전까지 macOS는 **소스 설치를 1순위 폴백**으로 명시(우클릭-열기 우회는 보조). win은 단독 실행파일 1순위 유지.
-- **의존성 명시(정정)**: 웹서버는 `mcp>=1.28`의 전이 의존이지만 공개 계약이 아니므로, `pyproject.toml`에 `starlette`·`uvicorn`을 **직접 의존성으로 고정**(버전 범위 명시). frozen 빌드 import 가능성 + 버전 호환을 **CI 스모크로 검증**. 정직한 문서화: "런타임 의존 = yt-dlp + 웹서버(starlette/uvicorn); **추출 파이프라인 의존 = yt-dlp 하나**".
+- **의존성 명시(정정 2 — 2026-07-17 구현착수)**: 웹서버 = **stdlib `http.server`**(`ThreadingHTTPServer`+`BaseHTTPRequestHandler`). starlette/uvicorn 채택 **철회** — v2 웹 UI는 로컬 단일사용자·동기 완료 응답이라 async/ASGI 불필요, webapp이 mcp를 import하지 않으므로 "전이 의존이라 어차피 있음" 근거 불성립. **런타임 의존 추가 0**. 정직한 문서화: "**런타임 의존 = yt-dlp 하나**(추출 파이프라인·웹서버 모두 — 웹서버는 표준 라이브러리); tkinter는 표준 라이브러리(폴더 대화상자)". frozen 빌드 import는 다음 run 패키징에서 CI 스모크 검증.
 
 ---
 
@@ -221,6 +221,7 @@ LABYSCRIBE-DATA-{동적토큰}>>>
 
 ## 11. 미결·리스크 (구현 시 확정 / 코드 층 이월)
 
+- **[다음 run 이월] v2 캐시 증분 세대 원자성** — codex 3연속 HIGH(`add_v2_artifacts` parts/ rmtree→rename 부재창·프로세스간 레이스). v2 완화 = `extract_lock`(동시 직렬화)·완결마커 `meta.parts`(마지막 os.replace 커밋)·`transcript.md` 존재 확인·raw 불변 재생성(멱등) + 단일사용자 로컬 위협모델로 **수용**(code-reviewer 도달성 분석: 비원자 구간은 'parts 필드 가진 적 없는' 상태에서만 도달 → 조용한 오귀속 미발생). 완전 원자성(불변 세대 디렉터리 + meta 원자 포인터 전환)은 다음 run.
 - **[코드층 이월] 파일시스템 TOCTOU/reparse** — openat/dirfd 성분 검증·Windows reparse 대응. v1 수준으로 시작, 코드 교차감사에서 판단.
 - **[코드층 이월] SSRF redirect-hop** — validate_url이 리다이렉트·추출기 추가요청까지 제한하는지 v1 검증 + 테스트 고정.
 - **[구현 확정] 파이프라인 원자성(3패스)** — 추출·분할·렌더를 **staging에서 완결 후 storage 단일 커밋**(저장 후 분할 순서 금지). §4.2 배선을 이 순서로 확정.
@@ -230,7 +231,7 @@ LABYSCRIBE-DATA-{동적토큰}>>>
 - **[구현 확정] tkinter·clipboard(3패스)** — 폴더 대화상자 **GUI 메인스레드 디스패치·단일 실행 잠금**(frozen 스모크). Clipboard API 권한거부 시 **선택가능 텍스트 수동 복사** 폴백.
 - **동시성**: 중복 [추출] 제출 → 영상/캐시키별 단일 실행 잠금·중복 병합·종료 시 yt-dlp 자식 정리(경량).
 - **yt-dlp `chapters` 신뢰도**: 챕터 없는 영상 비율 높으면 폴백이 주 경로 → 초기 실영상으로 분포 확인.
-- **PyInstaller + 웹서버·tkinter 번들**: uvicorn/starlette/tkinter가 frozen에서 import·표시되는지 스모크(§7 CI).
+- **PyInstaller + 웹서버·tkinter 번들**: http.server(stdlib)·tkinter가 frozen에서 import·표시되는지 스모크(§7 CI · 다음 run).
 - **macOS 빌드·서명**: 미서명 배포 Gatekeeper 마찰 → 우회 안내.
 - **포트 충돌**: 고정 포트 점유 시 대체 포트 탐색.
 

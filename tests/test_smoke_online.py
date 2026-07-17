@@ -21,9 +21,13 @@ import pytest
 
 import extract as E
 
-# Me at the zoo(2005 최초 업로드·삭제위험 최저·영어 수동자막).
+# Me at the zoo(2005 최초 업로드·삭제위험 최저·영어 수동자막·챕터 無).
 SMOKE_URL = "https://www.youtube.com/watch?v=jNQXAC9IVRw"
 SMOKE_VID = "jNQXAC9IVRw"
+
+# 3Blue1Brown 신경망(삭제위험 극저·영어자막·챕터 有) — v2 챕터 경계 분할 스모크.
+CHAPTERED_URL = "https://www.youtube.com/watch?v=aircAruvnKk"
+CHAPTERED_VID = "aircAruvnKk"
 
 
 def _ytdlp_available() -> bool:
@@ -82,3 +86,29 @@ def test_smoke_real_video_extract_and_cache_hit(tmp_path, monkeypatch):
     assert r2.exit_code == E.EXIT_OK, r2.message
     assert calls["n"] == first                          # seam spy: 추가 호출 0
     assert r2.transcript == r1.transcript
+
+
+# ── CK-22 v2 emit_markdown 스모크(챕터 無/有 각 1) ─────────────
+
+@pytest.mark.online
+@pytest.mark.smoke
+def test_smoke_v2_markdown_no_chapters(tmp_path):
+    _skip_if_unavailable()
+    r = E.run_extract(SMOKE_URL, None, str(tmp_path), emit_markdown=True)
+    assert r.exit_code == E.EXIT_OK, r.message
+    assert r.parts and len(r.parts) >= 1
+    assert all(p["chapter_no"] == 0 for p in r.parts)   # 무챕터 → 폴백 파트
+    leaf = glob.glob(os.path.join(str(tmp_path), SMOKE_VID, "en-*"))[0]
+    assert os.path.exists(os.path.join(leaf, "transcript.md"))
+    assert os.path.isdir(os.path.join(leaf, "parts"))
+
+
+@pytest.mark.online
+@pytest.mark.smoke
+def test_smoke_v2_markdown_with_chapters(tmp_path):
+    _skip_if_unavailable()
+    r = E.run_extract(CHAPTERED_URL, None, str(tmp_path), emit_markdown=True)
+    assert r.exit_code == E.EXIT_OK, r.message
+    assert r.parts and len(r.parts) >= 1                # 챕터 有면 챕터파트·無면 폴백(분포 §11)
+    leaf = glob.glob(os.path.join(str(tmp_path), CHAPTERED_VID, "*"))[0]
+    assert os.path.exists(os.path.join(leaf, "transcript.md"))
