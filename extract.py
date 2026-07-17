@@ -21,6 +21,8 @@ from dataclasses import dataclass
 from typing import Optional
 from urllib.parse import urlparse
 
+import chapters
+import render_md
 import storage
 from handles import content_hash
 
@@ -63,6 +65,7 @@ class ExtractResult:
     message: str
     meta: dict                    # 성공 시 전체 meta·실패 시 부분(또는 {})
     transcript: Optional[str]     # 성공 시 정제 transcript·실패 시 None
+    parts: Optional[tuple] = None  # [v2 신규·기본 None] 렌더 파트 레코드(webapp 서빙). v1 무영향.
 
 
 # ── 순수함수 (단위 테스트 대상) ────────────────────────────────
@@ -434,13 +437,98 @@ def download_sub(url, tag, outdir, vid, fmt="vtt", retries=3):
     return None, ("failed" if _RETRYABLE.search(last_err) else "no_file")
 
 
-def run_extract(url, lang, output_root):
-    """오케스트레이션 SSOT — main·server 공통. URL검증→정보수집→트랙선정→캐시조회→
-    temp확보→raw보존→json3 best-effort→parse_vtt→quality 게이트→atomic 발행.
+# ── v2 파트 렌더 헬퍼 (오케스트레이션 — 순수 chapters/render_md 조합) ────
+
+def _render_parts(cues, chapters_meta, video_meta):
+    """cues + chapters 메타 → (parts, part_mds, transcript_md). 순수 조합(raise 위임)."""
+    parts = chapters.split(cues, chapters_meta)
+    part_mds = tuple(render_md.part(p, len(parts), video_meta) for p in parts)
+    transcript_md = render_md.combined(parts, video_meta)
+    return parts, part_mds, transcript_md
+
+
+def _part_records(parts, part_mds):
+    """webapp 서빙용 파트 레코드(markdown 포함)."""
+    return tuple({
+        "part_no": p.part_no, "chapter_no": p.chapter_no, "title": p.title,
+        "markdown": md, "bytes": len(md.encode("utf-8")),
+    } for p, md in zip(parts, part_mds))
+
+
+def _meta_parts_field(parts, part_mds):
+    """meta.json 저장용 파트 필드(markdown 제외·바이트만)."""
+    return [{
+        "part_no": p.part_no, "chapter_no": p.chapter_no,
+        "title": p.title, "bytes": len(md.encode("utf-8")),
+    } for p, md in zip(parts, part_mds)]
+
+
+_MAX_CHAPTERS_STORED = 500       # meta 저장 챕터 항목 상한(과대 payload backstop)
+_MAX_CHAPTER_TITLE = 200         # 챕터 제목 저장 길이 상한
+
+
+def _project_chapters(chapters_meta):
+    """meta 저장용 chapters 투영 — 화이트리스트 필드 + 항목·제목 길이 상한(과대 payload 차단)."""
+    if not isinstance(chapters_meta, list):
+        return None
+    out = []
+    for c in chapters_meta[:_MAX_CHAPTERS_STORED]:
+        if isinstance(c, dict):
+            title = c.get("title")
+            out.append({"start_time": c.get("start_time"), "end_time": c.get("end_time"),
+                        "title": title[:_MAX_CHAPTER_TITLE] if isinstance(title, str) else title})
+    return out or None
+
+
+_MARKER_LINE_RE = re.compile(r"^\[\d\d:\d\d:\d\d\]$")   # 10분 마커 줄(폴백 가짜 cue 배제용)
+
+
+def _cues_from_cached(cached_dir, c_meta, c_transcript):
+    """v1 캐시 증분용 cue 확보 — raw vtt 재파싱(무네트워크). 손상 시 transcript 폴백.
+
+    폴백 시 이미 렌더된 transcript 의 10분 마커 줄(`[HH:MM:SS]`)은 **가짜 cue 로 재유입되면
+    이중 마커·본문 오염**되므로 제외(정상 경로는 raw 재파싱이라 무관).
+    """
+    raw_rel = c_meta.get("raw_vtt")
+    if isinstance(raw_rel, str):
+        try:
+            with open(os.path.join(cached_dir, raw_rel), encoding="utf-8",
+                      errors="replace") as f:
+                return _dedup_rolling(_parse_vtt_cues(f.read()))
+        except OSError:
+            pass
+    return [(0.0, line) for line in c_transcript.splitlines()
+            if line.strip() and not _MARKER_LINE_RE.match(line.strip())]
+
+
+def _incremental_v2(directory, c_meta, c_transcript, chapters_meta, root):
+    """v1/미완결 저장본에 v2 `.md` 세트 증분 생성 → (merged_meta, part_records).
+
+    cue = raw 재파싱(무네트워크). chapters_meta = 캐시히트에도 이미 조회된 `info` 의 것을
+    활용(있으면 챕터 경계 분할·없으면 폴백). 저장 실패는 비치명(메모리 파트 반환).
+    """
+    cues = _cues_from_cached(directory, c_meta, c_transcript)
+    parts, part_mds, transcript_md = _render_parts(cues, chapters_meta, c_meta)
+    merged = dict(c_meta)
+    merged["chapters"] = _project_chapters(chapters_meta)
+    merged["parts"] = _meta_parts_field(parts, part_mds)
+    merged["transcript_md"] = "transcript.md"
+    try:
+        storage.add_v2_artifacts(directory, part_mds, transcript_md, merged, root)
+    except OSError as e:
+        print("경고: v2 캐시 증분 저장 실패(%s) — 메모리 파트로 계속" % e, file=sys.stderr)
+    return merged, _part_records(parts, part_mds)
+
+
+def run_extract(url, lang, output_root, *, emit_markdown=False):
+    """오케스트레이션 SSOT — main·server·webapp 공통. URL검증→정보수집→트랙선정→캐시조회→
+    temp확보→raw보존→json3 best-effort→parse_vtt→quality 게이트→[v2 챕터분할]→atomic 발행.
 
     output_root = 저장 루트(D3-D). video_id 는 추출 후에야 알 수 있어 run_extract 가
-    temp/final 을 스스로 관리한다. 반환 = ExtractResult(exit_code·message·meta·transcript).
+    temp/final 을 스스로 관리한다. 반환 = ExtractResult(exit_code·message·meta·transcript·parts).
     실패경로는 temp 를 finally 정리해 디스크 흔적 0(완결세트만 published·AC-11).
+    emit_markdown=True(webapp) 면 챕터 분할·`.md` 세트를 **staging 안에서** 완결 후 단일
+    커밋(AC-13) — v1 stdio MCP(=False)는 chapters/render_md 미실행·바이트 동일 격리.
     (⚠ `shutil.which` preflight 는 여기 두지 않음 — server 경계에서·테스트 결정성.)
     """
     # ① URL 검증 (SSRF allowlist) — 실패는 크래시가 아닌 분류 종료
@@ -507,10 +595,25 @@ def run_extract(url, lang, output_root):
         r = storage.read_published(cached)
         if r:
             c_transcript, c_meta = r
+            if not emit_markdown:
+                return ExtractResult(
+                    EXIT_OK,
+                    "OK transcript 캐시 히트(id=%s lang=%s chars=%d) → %s"
+                    % (vid, tag, len(c_transcript), cached), c_meta, c_transcript)
+            # v2: 완결 파트 있으면 그대로, 없으면(v1 캐시·미완결) 증분 생성(무네트워크).
+            # 챕터 = 이미 조회된 info 의 것 활용(캐시히트에도 info 는 있음 → 챕터 경계 분할).
+            cached_parts = storage.read_v2_parts(cached, c_meta)
+            if cached_parts is not None:
+                return ExtractResult(
+                    EXIT_OK, "OK v2 캐시 히트(id=%s lang=%s parts=%d) → %s"
+                    % (vid, tag, len(cached_parts), cached),
+                    c_meta, c_transcript, cached_parts)
+            merged, part_records = _incremental_v2(cached, c_meta, c_transcript,
+                                                   info.get("chapters"), root)
             return ExtractResult(
-                EXIT_OK,
-                "OK transcript 캐시 히트(id=%s lang=%s chars=%d) → %s"
-                % (vid, tag, len(c_transcript), cached), c_meta, c_transcript)
+                EXIT_OK, "OK v2 증분 생성(id=%s lang=%s parts=%d) → %s"
+                % (vid, tag, len(part_records), cached),
+                merged, c_transcript, part_records)
 
     # ⑦ 디스크 총량 상한(D3-E) — HARD 거부 · SOFT 경고 · 캐시 히트는 면제(위에서 반환)
     used = storage.disk_usage(root)
@@ -578,18 +681,35 @@ def run_extract(url, lang, output_root):
                 "EMPTY_TRANSCRIPT 자막은 받았으나 정제 결과 무효(빈/과소). "
                 "id=%s lang=%s" % (vid, tag), meta, None)
 
-        # f meta 확정 + temp 안에 완결세트 기록(fsync)
+        # e2 [v2] emit_markdown 이면 챕터 분할·렌더 (staging 안 — AC-13). 순수 chapters/render_md.
+        part_records = None
+        part_mds = None
+        transcript_md = None
+        if emit_markdown:
+            cues = _dedup_rolling(_parse_vtt_cues(raw))
+            parts, part_mds, transcript_md = _render_parts(cues, info.get("chapters"), meta)
+            meta["chapters"] = _project_chapters(info.get("chapters"))
+            meta["parts"] = _meta_parts_field(parts, part_mds)
+            meta["transcript_md"] = "transcript.md"
+            part_records = _part_records(parts, part_mds)
+
+        # f meta 확정 + temp 안에 완결세트 기록(fsync). meta.json 은 parts 필드 확정 뒤.
         meta["status"] = "ok"
         meta["transcript"] = "transcript.txt"
         storage.write_text_synced(os.path.join(temp, "transcript.txt"), transcript)
+        if emit_markdown:
+            storage.stage_v2_files(temp, part_mds, transcript_md)
         storage.write_text_synced(os.path.join(temp, "meta.json"),
                                   json.dumps(meta, ensure_ascii=False, indent=2))
 
-        # g′ 발행 전 sweep — 완결세트(transcript.txt·meta.json·raw/) 외 최상위 잔여
-        #    scratch 파일 무조건 제거 → 리프 형태 불변 보장(CK-1·정규화 미스 stray 포함)
+        # g′ 발행 전 sweep — 완결세트(transcript.txt·meta.json·[transcript.md]·raw/·[parts/])
+        #    외 최상위 잔여 scratch 파일 제거 → 리프 형태 불변(CK-1·stray 포함). 디렉토리는 보존.
+        keep = {"transcript.txt", "meta.json"}
+        if emit_markdown:
+            keep.add("transcript.md")
         for name in os.listdir(temp):
             p = os.path.join(temp, name)
-            if os.path.isfile(p) and name not in ("transcript.txt", "meta.json"):
+            if os.path.isfile(p) and name not in keep:
                 os.remove(p)
 
         # g 불변 버전 디렉토리로 atomic 발행. 경쟁패자는 재조회(idempotent·D3-B)
@@ -599,10 +719,16 @@ def run_extract(url, lang, output_root):
             r = storage.read_published(final)
             if r:
                 p_transcript, p_meta = r
+                p_parts = None
+                if emit_markdown:
+                    p_parts = storage.read_v2_parts(final, p_meta)
+                    if p_parts is None:            # 상대가 v1 발행 → v2 증분(파트 없는 성공 차단)
+                        p_meta, p_parts = _incremental_v2(final, p_meta, p_transcript,
+                                                          info.get("chapters"), root)
                 return ExtractResult(
                     EXIT_OK,
                     "OK transcript 동시발행 재조회(id=%s lang=%s chars=%d) → %s"
-                    % (vid, tag, len(p_transcript), final), p_meta, p_transcript)
+                    % (vid, tag, len(p_transcript), final), p_meta, p_transcript, p_parts)
             # 경쟁 패자인데 기존본 읽기 실패(손상 가능) → false success 금지·재시도성 분류
             return ExtractResult(
                 EXIT_DOWNLOAD_FAILED,
@@ -611,7 +737,7 @@ def run_extract(url, lang, output_root):
         return ExtractResult(
             EXIT_OK,
             "OK transcript 생성(id=%s lang=%s chars=%d) → %s"
-            % (vid, tag, len(transcript), final), meta, transcript)
+            % (vid, tag, len(transcript), final), meta, transcript, part_records)
     finally:
         shutil.rmtree(temp, ignore_errors=True)   # 발행성공=no-op·실패=흔적 정리
 

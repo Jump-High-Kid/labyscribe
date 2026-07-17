@@ -281,3 +281,98 @@ def cleanup_stale_temp(root: str, max_age_sec: float) -> None:
                 shutil.rmtree(path, ignore_errors=True)
         except OSError:
             continue
+
+
+# ── v2 저장(Markdown 파트) — v1 계약 보존·find_cached 무변경 ─────────
+
+def stage_v2_files(temp: str, part_mds, transcript_md: str) -> None:
+    """신규추출 temp 에 `parts/part-NN.md` + `transcript.md` 기록(O_EXCL|O_NOFOLLOW+fsync).
+
+    이후 atomic_publish 가 디렉토리째 단일 커밋(AC-13) — 여기선 staging 만.
+    """
+    parts_dir = os.path.join(temp, "parts")
+    os.makedirs(parts_dir, mode=0o700)
+    os.chmod(parts_dir, 0o700)
+    for i, md in enumerate(part_mds, 1):
+        write_text_synced(os.path.join(parts_dir, "part-%02d.md" % i), md)
+    write_text_synced(os.path.join(temp, "transcript.md"), transcript_md)
+    fsync_dir(parts_dir)
+
+
+def read_v2_parts(directory: str, meta: dict) -> Optional[tuple]:
+    """완결 v2 세트(meta.parts 필드 + `parts/*.md` 파일) → part 레코드 튜플, 미완결 None.
+
+    완결 신호 = meta 의 `parts` 필드 존재 AND 각 파일 존재(완료 마커·AC-14). 파일 부재·
+    필드 손상 = None(호출자가 증분 재생성). O_NOFOLLOW 로 읽음(변조 symlink 차단).
+    """
+    part_list = meta.get("parts")
+    if not part_list:
+        return None
+    md_name = meta.get("transcript_md")          # 완결 = parts 필드 + transcript.md 파일 존재
+    if md_name:
+        try:
+            os.close(os.open(os.path.join(directory, md_name),
+                             os.O_RDONLY | os.O_NOFOLLOW))
+        except OSError:
+            return None                          # transcript.md 부재(증분 커밋 중) → 미완결
+    records = []
+    for entry in part_list:
+        try:
+            pn = int(entry["part_no"])
+        except (KeyError, TypeError, ValueError):
+            return None
+        try:
+            md = _read_file_nofollow(os.path.join(directory, "parts", "part-%02d.md" % pn))
+        except OSError:
+            return None                             # 미완결(파일 부재)
+        records.append({
+            "part_no": pn,
+            "chapter_no": entry.get("chapter_no"),
+            "title": entry.get("title"),
+            "markdown": md,
+            "bytes": len(md.encode("utf-8")),
+        })
+    return tuple(records)
+
+
+def add_v2_artifacts(published_dir: str, part_mds, transcript_md: str,
+                     meta_merged: dict, root: str) -> None:
+    """v1 캐시 증분(AC-12/14) — 완결 디렉토리에 `.md` 세트 원자 추가.
+
+    `raw/`·`transcript.txt` 무접촉. meta 는 chapters/parts 만 병합된 `meta_merged` 로
+    **원자 replace = 완결 커밋 포인트**(마지막). 중간종료 → meta 에 parts 없어 미완결
+    (read_v2_parts None → 재생성·멱등). 실패 시 staging 만 정리(기존 디렉터리 무손상).
+    """
+    root_real = os.path.realpath(root)
+    if not is_within(os.path.realpath(published_dir), root_real):
+        raise OSError("containment 위반: %r 이 %r 밖" % (published_dir, root))
+
+    staging = os.path.join(published_dir, ".v2tmp-" + secrets.token_hex(8))
+    os.makedirs(staging, mode=0o700)
+    os.chmod(staging, 0o700)
+    try:
+        st_parts = os.path.join(staging, "parts")
+        os.makedirs(st_parts, mode=0o700)
+        os.chmod(st_parts, 0o700)
+        for i, md in enumerate(part_mds, 1):
+            write_text_synced(os.path.join(st_parts, "part-%02d.md" % i), md)
+        st_md = os.path.join(staging, "transcript.md")
+        st_meta = os.path.join(staging, "meta.json")
+        write_text_synced(st_md, transcript_md)
+        write_text_synced(st_meta, json.dumps(meta_merged, ensure_ascii=False, indent=2))
+        fsync_dir(st_parts)
+        fsync_dir(staging)
+
+        # 커밋 순서: transcript.md → parts/ 스왑 → (마지막) meta.json replace.
+        # os.replace = 기존 파일 원자 대체(Windows 재실행 포함 · os.rename 은 Win 에서 대상
+        # 존재 시 실패). parts/ 디렉토리 스왑은 rmtree→rename(짧은 부재창) — 단일 사용자 로컬
+        # 위협모델상 수용, 완결 마커=meta.parts 로 미완결 세대는 read_v2_parts None(재생성).
+        os.replace(st_md, os.path.join(published_dir, "transcript.md"))
+        dst_parts = os.path.join(published_dir, "parts")
+        if os.path.isdir(dst_parts):
+            shutil.rmtree(dst_parts)
+        os.rename(st_parts, dst_parts)
+        os.replace(st_meta, os.path.join(published_dir, "meta.json"))  # 원자 replace = 완결
+        fsync_dir(published_dir)
+    finally:
+        shutil.rmtree(staging, ignore_errors=True)
