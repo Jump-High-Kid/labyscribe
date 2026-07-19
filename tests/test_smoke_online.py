@@ -92,8 +92,19 @@ def test_smoke_real_video_extract_and_cache_hit(tmp_path, monkeypatch):
 
 @pytest.mark.online
 @pytest.mark.smoke
-def test_smoke_v2_markdown_no_chapters(tmp_path):
+def test_smoke_v2_markdown_no_chapters(tmp_path, monkeypatch):
     _skip_if_unavailable()
+    # SMOKE_URL 이 이후 챕터를 획득(2026 외부변동 확인)해도 폴백 경로를 실증하도록
+    # info 의 chapters 만 제거 — 실 네트워크·자막 다운로드·렌더는 그대로 두고
+    # 무챕터 브랜치를 결정론적으로 강제(챕터 有 경로는 with_chapters 스모크가 담당).
+    real_info = E.run_ytdlp_json
+
+    def strip_chapters(*args, **kwargs):
+        info = dict(real_info(*args, **kwargs))
+        info.pop("chapters", None)
+        return info
+    monkeypatch.setattr(E, "run_ytdlp_json", strip_chapters)
+
     r = E.run_extract(SMOKE_URL, None, str(tmp_path), emit_markdown=True)
     assert r.exit_code == E.EXIT_OK, r.message
     assert r.parts and len(r.parts) >= 1

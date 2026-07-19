@@ -579,3 +579,7 @@ $("save").addEventListener("click", async () => {
 </body>
 </html>
 """
+
+
+if __name__ == "__main__":
+    sys.exit(main())

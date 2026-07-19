@@ -6,6 +6,11 @@ CK-10 Host/Origin 거부 · CK-11 프론트 XSS(textContent·CSP nonce) · CK-17
 import http.client
 import json
 import os
+import queue
+import re
+import socket
+import subprocess
+import sys
 import threading
 
 import pytest
@@ -206,3 +211,38 @@ def test_frontend_uses_textcontent_not_innerhtml():
     assert "innerHTML" not in html                          # innerHTML 0
     assert "textContent" in html                            # 외부 데이터 = textContent
     assert 'nonce="{{NONCE}}"' in html                      # script nonce
+
+
+# ── 진입점: `python webapp.py` 실기동 회귀 가드 ────────────
+
+def test_python_webapp_py_launches_server(tmp_path):
+    """`python webapp.py` 가 실제로 서버를 기동하는지(=__main__ 진입점 존재) 회귀 가드.
+
+    build_server 를 직접 import 하는 위 계약 테스트는 __main__ 진입점 부재를 못 잡는다 —
+    진입점이 없으면 스크립트는 정의만 하고 조용히 종료(출력·서버 0). 실 subprocess 로 재현.
+    네트워크 0(기동만·run_extract 미호출) · BROWSER=true 로 실 브라우저 자동열기 억제.
+    """
+    root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    env = {**os.environ, "OUTPUT_DIR": str(tmp_path / "out"), "BROWSER": "true"}
+    proc = subprocess.Popen(
+        [sys.executable, os.path.join(root, "webapp.py")],
+        cwd=root, env=env, text=True,
+        stdout=subprocess.DEVNULL, stderr=subprocess.PIPE)
+    line_q: "queue.Queue" = queue.Queue()
+    threading.Thread(target=lambda: line_q.put(proc.stderr.readline()),
+                     daemon=True).start()
+    try:
+        try:
+            line = line_q.get(timeout=15)
+        except queue.Empty:
+            raise AssertionError("15s 내 기동 URL 미출력 — __main__ 진입점 부재")
+        m = re.search(r"http://127\.0\.0\.1:(\d+)/", line)
+        assert m, "기동 URL 미출력(진입점 부재 의심): %r" % line
+        with socket.create_connection(("127.0.0.1", int(m.group(1))), timeout=5):
+            pass                                               # 실제 리스닝 확인
+    finally:
+        proc.terminate()
+        try:
+            proc.wait(timeout=5)
+        except subprocess.TimeoutExpired:
+            proc.kill()
