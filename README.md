@@ -30,6 +30,25 @@
 이 빌드도 **미서명**이다. Windows SmartScreen 이 "Windows의 PC 보호" 로 막으면
 **추가 정보 → 실행** 을 눌러 진행한다.
 
+## 웹 UI (v2 · Windows 단독 실행파일 · Claude Desktop 불요)
+
+Claude Desktop 없이 **브라우저에서 바로** 쓰는 로컬 웹 UI다. 추출·챕터 분할·Markdown 파트를
+로컬에서 만들고, 요약 프롬프트를 복사해 원하는 호스트(웹 Claude·ChatGPT 등)에 붙여넣는다.
+
+1. GitHub 릴리스에서 **`labyscribe-webui-win.zip`** 을 받는다.
+   (릴리스가 없으면 Actions `build` 워크플로의 artifact `labyscribe-webui-win` 에서 받는다.)
+2. 압축을 풀고 **`labyscribe-web.exe`** 를 더블클릭한다 → 로컬 웹서버가 뜨고 기본 브라우저가
+   `http://127.0.0.1:8760/` 을 연다(포트 점유 시 자동으로 다음 포트 탐색).
+3. 브라우저가 **자동으로 열리지 않으면** 콘솔에 출력된 주소(`http://127.0.0.1:<포트>/`)를 직접 연다.
+
+- **미서명 안내(SmartScreen)**: 이 빌드는 미서명이다. "Windows의 PC 보호" 가 뜨면
+  **추가 정보 → 실행**. 출처(이 저장소 릴리스·아래 SHA-256)를 확인하고 실행한다.
+- **네트워크 노출 0**: 서버는 `127.0.0.1` 에만 바인딩된다(LAN·인터넷 미노출).
+- 저장 위치 기본 `%USERPROFILE%\labyscribe`(환경변수 `OUTPUT_DIR` 로 변경).
+
+> **macOS 는 이번 릴리스 범위 밖** — 미서명 실행파일은 Gatekeeper 가 더블클릭을 막는다.
+> macOS 는 [CLI](#cli-개발자용)/소스 실행(`python webapp.py`)으로 쓰거나 다음 릴리스를 기다린다.
+
 ## 지원 호스트 / 플랜
 
 labyscribe 는 **로컬 `.mcpb`(Claude Desktop 확장 번들)** 로 배포된다. 아래 표는 호스트·플랜별
@@ -113,6 +132,19 @@ Windows(win-x64) `.mcpb` 는 로컬 대신 **GitHub Actions**(`windows-latest`)�
 (macOS 에서는 win-x64 바이너리를 만들 수 없다). `.github/workflows/build.yml` 이
 `build/build_windows.sh` 를 실행해 `labyscribe-win.mcpb` 를 artifact 로 올린다. 수동 실행은
 Actions 탭의 `build` 워크플로 → **Run workflow**(`workflow_dispatch`).
+
+v2 **웹 UI 단독 실행파일**(win-x64)도 같은 `build.yml` 의 `windows-webui` job 이
+`build/build_webapp_windows.sh` 로 빌드해 artifact `labyscribe-webui-win` 으로 올린다
+(webapp.py onedir + 번들 yt-dlp.exe · `.mcpb` 아님). 빌드 내부의 **frozen 스모크**
+(`--selfcheck` 프롬프트·tkinter 번들 + 웹서버 기동 + yt-dlp 실행)가 hard gate 라, 번들 결함이면
+job 이 RED 로 막힌다.
+
+### 릴리스 (유지관리자)
+
+Actions artifact 는 **보존기간**이 있으므로, 배포는 **GitHub 릴리스**에 에셋으로 고정한다:
+`labyscribe-webui-win` artifact 를 내려받아 릴리스에 첨부하고, 무결성 확인용 **SHA-256** 을
+릴리스 노트에 게시한다(`sha256sum labyscribe-webui-win.zip` · PowerShell `Get-FileHash`).
+사용자는 다운로드 후 해시를 대조한다. (릴리스 최종 zip 파일명은 발행 시 확정.)
 
 ## 개발/테스트
 

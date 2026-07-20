@@ -2,7 +2,11 @@
 
 실행: pytest   (repo 루트에서 · pythonpath=["."] 로 extract 해결)
 """
+import os
+import tempfile
 import unittest
+from unittest import mock
+
 import extract as E
 
 
@@ -236,6 +240,59 @@ class TestSafeFilename(unittest.TestCase):
 
     def test_length_capped(self):
         self.assertLessEqual(len(E.safe_filename("a" * 200)), 100)
+
+
+class TestYtdlpBin(unittest.TestCase):
+    """_ytdlp_bin frozen 경로해석 — R0(AC-9): Windows 번들 sibling 은
+    yt-dlp.exe(확장자 有). 확장자 없는 'yt-dlp' 만 찾으면 못 잡고 리터럴 폴백
+    (CreateProcess 앱-디렉토리 탐색 우연 의존). .exe 후보를 명시 해석해야 한다.
+    """
+
+    def test_env_override_wins(self):
+        with mock.patch.dict(os.environ, {"YTDLP_PATH": "/custom/yt-dlp"}):
+            self.assertEqual(E._ytdlp_bin(), "/custom/yt-dlp")
+
+    def test_frozen_resolves_exe_sibling_windows(self):
+        with tempfile.TemporaryDirectory() as d:
+            open(os.path.join(d, "yt-dlp.exe"), "w").close()   # 확장자 有만 존재
+            with mock.patch.dict(os.environ):
+                os.environ.pop("YTDLP_PATH", None)
+                with mock.patch.object(E.sys, "frozen", True, create=True), \
+                     mock.patch.object(E.sys, "executable",
+                                       os.path.join(d, "labyscribe-web.exe")), \
+                     mock.patch.object(E.sys, "_MEIPASS", d, create=True):
+                    self.assertEqual(E._ytdlp_bin(),
+                                     os.path.join(d, "yt-dlp.exe"))
+
+    def test_frozen_resolves_plain_sibling_posix(self):
+        # mac/linux 번들 sibling = yt-dlp(확장자 無) 회귀 방지
+        with tempfile.TemporaryDirectory() as d:
+            open(os.path.join(d, "yt-dlp"), "w").close()
+            with mock.patch.dict(os.environ):
+                os.environ.pop("YTDLP_PATH", None)
+                with mock.patch.object(E.sys, "frozen", True, create=True), \
+                     mock.patch.object(E.sys, "executable",
+                                       os.path.join(d, "labyscribe")), \
+                     mock.patch.object(E.sys, "_MEIPASS", d, create=True):
+                    self.assertEqual(E._ytdlp_bin(),
+                                     os.path.join(d, "yt-dlp"))
+
+    def test_frozen_both_absent_falls_back_to_literal(self):
+        # frozen 이나 sibling 후보 둘 다 부재 → 리터럴 'yt-dlp'(PATH 해석) 폴백
+        with tempfile.TemporaryDirectory() as d:              # 빈 디렉토리(후보 없음)
+            with mock.patch.dict(os.environ):
+                os.environ.pop("YTDLP_PATH", None)
+                with mock.patch.object(E.sys, "frozen", True, create=True), \
+                     mock.patch.object(E.sys, "executable",
+                                       os.path.join(d, "labyscribe-web.exe")), \
+                     mock.patch.object(E.sys, "_MEIPASS", d, create=True):
+                    self.assertEqual(E._ytdlp_bin(), "yt-dlp")
+
+    def test_not_frozen_returns_literal(self):
+        with mock.patch.dict(os.environ):
+            os.environ.pop("YTDLP_PATH", None)
+            with mock.patch.object(E.sys, "frozen", False, create=True):
+                self.assertEqual(E._ytdlp_bin(), "yt-dlp")
 
 
 if __name__ == "__main__":

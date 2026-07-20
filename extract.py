@@ -366,9 +366,11 @@ def _ytdlp_bin() -> str:
     if getattr(sys, "frozen", False):
         for base in (os.path.dirname(sys.executable), getattr(sys, "_MEIPASS", None)):
             if base:
-                cand = os.path.join(base, "yt-dlp")
-                if os.path.exists(cand):
-                    return cand
+                # Windows 번들 sibling = yt-dlp.exe(확장자 有) · mac/linux = yt-dlp (R0)
+                for name in ("yt-dlp", "yt-dlp.exe"):
+                    cand = os.path.join(base, name)
+                    if os.path.isfile(cand):   # 동명 디렉터리 오매칭 방지(codex)
+                        return cand
     return "yt-dlp"
 
 

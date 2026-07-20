@@ -444,7 +444,26 @@ def _gui_loop(state: AppState):
             ev.set()
 
 
+def _probe_tkinter() -> None:
+    """무디스플레이 tkinter/Tcl 번들 프로브 — `_tkinter` C확장 로드 + Tcl 인터프리터 생성.
+    창(Tk)이 아니라 Tcl 만 만들어 디스플레이 불요 → headless CI 에서도 실행. 번들 누락 시 raise."""
+    import tkinter                       # frozen 에 _tkinter 미번들이면 ImportError
+    tkinter.Tcl()                        # Tcl 데이터(init.tcl 등) 미번들이면 TclError
+
+
+def _selfcheck() -> int:
+    """`--selfcheck`: frozen 번들 무결성 오프라인 프로브(AC-8) — 프롬프트 번들 + tkinter/Tcl.
+    서버를 기동하지 않고 성공 0 반환. 실패는 raise(패키징 스모크 hard gate)."""
+    _summary_prompt()                    # 프롬프트 번들 확인(부재/빈파일=raise·M4)
+    _probe_tkinter()                     # _tkinter + Tcl 데이터 번들 확인
+    print("selfcheck OK", file=sys.stderr)
+    return 0
+
+
 def main(argv=None):
+    args = list(sys.argv[1:] if argv is None else argv)
+    if "--selfcheck" in args:            # 패키징 검증 프로브 — 서버 기동 전 조기 return
+        return _selfcheck()
     _summary_prompt()                    # preflight — 프롬프트 번들 누락/빈파일이면 기동 실패(M4)
     output_root = _resolve_output_dir()
     storage.cleanup_stale_temp(output_root, _STALE_TEMP_MAX_AGE_SEC)   # 라이브 temp age-based 보존

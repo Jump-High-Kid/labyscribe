@@ -8,6 +8,7 @@ out/
 /dist/
 /build/vendor/
 /build/pyi/
+/build/pyi-web/
 /.venv-build/
 *.mcpb
 *.egg-info/

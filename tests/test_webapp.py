@@ -290,6 +290,76 @@ def test_python_webapp_py_launches_server(tmp_path):
             proc.kill()
 
 
+# ── 진입점: --selfcheck 번들 무결성 프로브 (AC-8·CK-6·CK-11) ────────
+
+def test_selfcheck_short_circuits_before_bind(monkeypatch):
+    """--selfcheck: 서버 bind 도달 전 조기 return(CK-11·기동 흐름 불변).
+    tkinter 프로브는 별도 함수라 모킹 — 제어흐름은 데스크톱 tkinter 유무와 무관하게 검증."""
+    reached = {"bind": False}
+    monkeypatch.setattr(webapp, "_probe_tkinter", lambda: None)   # tkinter 독립
+    monkeypatch.setattr(webapp.storage, "cleanup_stale_temp",
+                        lambda *a, **k: None)                     # 회귀 시 실 홈 미접촉
+    monkeypatch.setattr(webapp, "_bind_with_fallback",
+                        lambda root: reached.__setitem__("bind", True) or (None, ""))
+    webapp._summary_prompt.cache_clear()
+    try:
+        rc = webapp.main(["--selfcheck"])
+        assert rc == 0
+        assert not reached["bind"], "selfcheck 가 서버 bind 로 흘러감(조기 return 실패)"
+    finally:
+        webapp._summary_prompt.cache_clear()
+
+
+def test_selfcheck_fails_on_missing_prompt(tmp_path, monkeypatch):
+    """selfcheck 는 프롬프트 번들 누락(배포 결함)도 잡는다 — 오프라인 무결성 게이트."""
+    monkeypatch.setattr(webapp, "_probe_tkinter", lambda: None)   # tkinter 독립
+    monkeypatch.setattr(webapp, "_resource_dir", lambda: str(tmp_path))  # prompts/ 없음
+    webapp._summary_prompt.cache_clear()
+    try:
+        with pytest.raises(OSError):                 # FileNotFoundError ⊂ OSError
+            webapp.main(["--selfcheck"])
+    finally:
+        webapp._summary_prompt.cache_clear()
+
+
+def test_selfcheck_real_tkinter_probe(monkeypatch):
+    """실제 _tkinter 로드 + Tcl 인터프리터 생성으로 AC-8 충족(무디스플레이).
+    frozen 스모크가 파일존재 관대매칭 대신 이 경로를 exe 로 실행. tkinter 부재 데스크톱은 skip."""
+    pytest.importorskip("tkinter")
+    webapp._summary_prompt.cache_clear()
+    try:
+        assert webapp.main(["--selfcheck"]) == 0     # 실 프로브 통과
+    finally:
+        webapp._summary_prompt.cache_clear()
+
+
+def test_main_opens_browser_at_server_url(monkeypatch):
+    """AC-10(codex H3): 기동 시 webbrowser.open 이 실제 서버 URL 로 호출된다.
+    frozen 스모크는 no-op BROWSER 로 실 스폰만 억제하므로, 호출 계약은 이 유닛테스트가 검증."""
+    opened = {}
+
+    class _FakeHttpd:
+        server_address = ("127.0.0.1", 8760)
+        state = object()
+
+        def serve_forever(self):
+            pass
+
+    monkeypatch.setattr(webapp, "_bind_with_fallback",
+                        lambda root: (_FakeHttpd(), "nonce"))
+    monkeypatch.setattr(webapp.storage, "cleanup_stale_temp",
+                        lambda *a, **k: None)
+    monkeypatch.setattr(webapp, "_gui_loop", lambda state: None)
+    monkeypatch.setattr(webapp.webbrowser, "open",
+                        lambda url: opened.__setitem__("url", url) or True)
+    webapp._summary_prompt.cache_clear()
+    try:
+        assert webapp.main([]) == 0
+        assert opened.get("url") == "http://127.0.0.1:8760/"   # 실 서버 URL·포트
+    finally:
+        webapp._summary_prompt.cache_clear()
+
+
 # ── ① 전체 복사: GET /api/transcript/<rid> (통합 transcript.md) ─────
 
 def test_transcript_returns_joined_markdown(server, monkeypatch):
