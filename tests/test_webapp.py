@@ -246,3 +246,101 @@ def test_python_webapp_py_launches_server(tmp_path):
             proc.wait(timeout=5)
         except subprocess.TimeoutExpired:
             proc.kill()
+
+
+# ── ① 전체 복사: GET /api/transcript/<rid> (통합 transcript.md) ─────
+
+def test_transcript_returns_joined_markdown(server, monkeypatch):
+    """전 파트를 \\n\\n 으로 결합한 통합 transcript 를 반환(과분할 UX 완화)."""
+    def _multi(url, lang, root, emit_markdown=False):
+        parts = ({"part_no": 1, "chapter_no": 1, "title": "A",
+                  "markdown": "AAA", "bytes": 3},
+                 {"part_no": 2, "chapter_no": 2, "title": "B",
+                  "markdown": "BBB", "bytes": 3})
+        return E.ExtractResult(E.EXIT_OK, "ok", {"title": "T", "id": "v"}, "t", parts)
+    monkeypatch.setattr(webapp._extract, "run_extract", _multi)
+    _httpd, nonce, port = server
+    _s, data, _h = _req(port, "POST", "/api/extract", nonce=nonce,
+                        origin=_origin(port), body={"url": "https://youtu.be/x"})
+    rid = data["result_id"]
+    status, full, _h = _req(port, "GET", "/api/transcript/%s" % rid, nonce=nonce)
+    assert status == 200
+    assert full["markdown"] == "AAA\n\nBBB"          # 전 파트 결합(파트 순서 보존)
+
+
+def test_transcript_without_nonce_403(server):
+    _httpd, _nonce, port = server
+    status, _data, _h = _req(port, "GET", "/api/transcript/abc")
+    assert status == 403                             # nonce 게이트(/api/part 와 동일)
+
+
+def test_transcript_invalid_result_404(server):
+    _httpd, nonce, port = server
+    status, data, _h = _req(port, "GET", "/api/transcript/nope", nonce=nonce)
+    assert status == 404
+    assert data["error"]["code"] == "INVALID_RESULT"
+
+
+# ── ② 웹 전용 프롬프트: MCP 도구 지시 없음 · v1 파일 불변 ───────────
+
+def test_web_prompt_omits_mcp_tool_references():
+    """웹 UI 는 순서대로 붙여넣기 흐름 — 존재않는 MCP 도구를 지시하면 안 됨."""
+    webapp._summary_prompt.cache_clear()
+    prompt = webapp._summary_prompt()
+    assert prompt.strip()                            # 프롬프트 실재
+    for tok in ("get_transcript_part", "extract_transcript", "transcript_handle"):
+        assert tok not in prompt                     # 웹에 없는 도구 미지시
+
+
+def test_v1_mcp_prompt_file_unchanged():
+    """웹 분리는 v1 MCP 프롬프트(summarize_video.md)를 건드리지 않는다."""
+    root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    with open(os.path.join(root, "prompts", "summarize_video.md"),
+              encoding="utf-8") as f:
+        assert "get_transcript_part" in f.read()     # v1 도구 지시 유지
+
+
+# ── ③ tkinter 폴더 대화상자: 실패 ≠ 취소 (침묵실패 차단) ────────────
+
+def _run_gui(state):
+    threading.Thread(target=webapp._gui_loop, args=(state,), daemon=True).start()
+
+
+def test_pick_folder_dialog_failure_is_error_not_cancelled(server, monkeypatch):
+    """대화상자 열기 실패(tkinter 부재·TclError)를 '취소'로 위장하지 않는다."""
+    def _boom():
+        raise RuntimeError("no display")
+    monkeypatch.setattr(webapp, "_ask_directory", _boom)
+    httpd, nonce, port = server
+    _run_gui(httpd.state)
+    status, data, _h = _req(port, "POST", "/api/pick-folder", nonce=nonce,
+                            origin=_origin(port), body={})
+    assert status == 500
+    assert data["error"]["code"] == "FOLDER_DIALOG_FAILED"
+
+
+def test_pick_folder_user_cancel_still_cancelled(server, monkeypatch):
+    """사용자 취소(빈 경로)는 여전히 cancelled — 정상 흐름 보존."""
+    monkeypatch.setattr(webapp, "_ask_directory", lambda: None)
+    httpd, nonce, port = server
+    _run_gui(httpd.state)
+    status, data, _h = _req(port, "POST", "/api/pick-folder", nonce=nonce,
+                            origin=_origin(port), body={})
+    assert status == 200
+    assert data["status"] == "cancelled"
+
+
+def test_pick_folder_empty_error_message_still_error(server, monkeypatch):
+    """예외 메시지가 비어도(str(e)=='') 실패를 취소로 위장하지 않는다(codex MEDIUM).
+
+    '실패 여부'는 error 값의 truthiness 가 아니라 error 키 존재로 판정해야 한다.
+    """
+    def _boom():
+        raise RuntimeError("")           # 메시지 없는 예외 → str(e) == ""
+    monkeypatch.setattr(webapp, "_ask_directory", _boom)
+    httpd, nonce, port = server
+    _run_gui(httpd.state)
+    status, data, _h = _req(port, "POST", "/api/pick-folder", nonce=nonce,
+                            origin=_origin(port), body={})
+    assert status == 500
+    assert data["error"]["code"] == "FOLDER_DIALOG_FAILED"

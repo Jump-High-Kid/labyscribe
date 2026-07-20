@@ -75,8 +75,10 @@ def _resource_dir() -> str:
 
 @lru_cache(maxsize=1)
 def _summary_prompt() -> str:
+    # 웹 전용 프롬프트 — v1 MCP 프롬프트(summarize_video.md)와 분리. 웹은 도구 없이
+    # 파트를 순서대로 붙여넣는 흐름이라 get_transcript_part 등 MCP 도구를 지시하면 안 됨.
     try:
-        with open(os.path.join(_resource_dir(), "prompts", "summarize_video.md"),
+        with open(os.path.join(_resource_dir(), "prompts", "web_summarize.md"),
                   encoding="utf-8") as f:
             return f.read()
     except OSError:
@@ -202,6 +204,12 @@ class Handler(http.server.BaseHTTPRequestHandler):
                 return
             self._api_part(path)
             return
+        if path.startswith("/api/transcript/"):
+            if not self._nonce_ok():
+                self._send_json(403, _err("FORBIDDEN_NONCE", "nonce 누락/불일치."))
+                return
+            self._api_transcript(path)
+            return
         self._send_json(404, _err("NOT_FOUND", "경로 없음."))
 
     def do_POST(self):
@@ -287,6 +295,17 @@ class Handler(http.server.BaseHTTPRequestHandler):
                 return
         self._send_json(404, _err("PART_OUT_OF_RANGE", "해당 파트 없음."))
 
+    def _api_transcript(self, path: str):
+        segs = path.split("/")           # ['', 'api', 'transcript', rid]
+        if len(segs) != 4:
+            self._send_json(404, _err("NOT_FOUND", "경로 형식 오류."))
+            return
+        entry = self._state.results.get(segs[3])
+        if entry is None:
+            self._send_json(404, _err("INVALID_RESULT", "유효하지 않거나 만료된 결과."))
+            return
+        self._send_json(200, {"markdown": _full_transcript(entry)})
+
     def _api_save(self, body: dict):
         entry = self._state.results.get(body.get("result_id"))
         cap = self._state.capabilities.get(body.get("capability_id"))
@@ -310,6 +329,10 @@ class Handler(http.server.BaseHTTPRequestHandler):
         if not ev.wait(timeout=_DIALOG_TIMEOUT_SEC):
             self._send_json(503, _err("DIALOG_BUSY", "폴더 선택 대화상자를 열 수 없습니다."))
             return
+        if "error" in holder:            # 실패 여부는 error '키 존재'로 — 빈 메시지 예외도 포착
+            self._send_json(500, _err("FOLDER_DIALOG_FAILED",
+                            "폴더 대화상자를 열 수 없습니다. 파트를 복사해 직접 저장하세요."))
+            return
         path = holder.get("path")
         if not path:
             self._send_json(200, {"status": "cancelled"})
@@ -323,6 +346,11 @@ def _err(code: str, message: str) -> dict:
     return {"error": {"code": code, "message": message}}
 
 
+def _full_transcript(entry) -> str:
+    """entry 전 파트 markdown 을 순서대로 \\n\\n 결합 — 통합 transcript(저장·전체복사 공용)."""
+    return "\n\n".join(p["markdown"] for p in entry.parts)
+
+
 def _save_to_capability(entry, cap_root: str) -> list:
     """entry 파트 세트를 승인 폴더(cap_root) 하위에 원자 저장. 충돌=접미 번호 비덮어쓰기.
 
@@ -330,7 +358,7 @@ def _save_to_capability(entry, cap_root: str) -> list:
     """
     safe = _extract.safe_filename(entry.title or "labyscribe") or "labyscribe"
     part_mds = tuple(p["markdown"] for p in entry.parts)
-    transcript_md = "\n\n".join(part_mds)
+    transcript_md = _full_transcript(entry)
 
     temp = storage.make_temp(cap_root)
     try:
@@ -370,15 +398,19 @@ def _bind_with_fallback(output_root: str):
 
 
 def _ask_directory() -> Optional[str]:
-    """tkinter 폴더 대화상자 — **메인스레드에서만** 호출(Tk 비스레드안전)."""
+    """tkinter 폴더 대화상자 — **메인스레드에서만** 호출(Tk 비스레드안전).
+
+    tkinter 부재/대화상자 실패는 **raise**(호출측 `_gui_loop` 이 holder['error']로 포착) —
+    '사용자 취소'(빈 경로→None)와 혼동해 침묵실패로 위장하지 않기 위함. 취소만 None.
+    """
     try:
         import tkinter
         from tkinter import filedialog
-    except Exception:
-        return None
+    except Exception as e:
+        raise RuntimeError("tkinter 를 사용할 수 없어 폴더 대화상자를 열 수 없습니다") from e
     root = tkinter.Tk()
-    root.withdraw()
-    try:
+    try:                                 # withdraw 포함 전체를 감싸 예외 시에도 destroy 보장
+        root.withdraw()
         path = filedialog.askdirectory()
     finally:
         root.destroy()
@@ -478,6 +510,7 @@ li .bytes { color:var(--muted); font-size:.78rem; }
   <div id="status"></div>
   <div class="tools" id="tools" hidden>
     <button class="ghost" id="copyPrompt">요약 프롬프트 복사</button>
+    <button class="ghost" id="copyAll">전체 복사</button>
     <button class="ghost" id="pick">저장 폴더 선택</button>
     <button class="ghost" id="save" disabled>이 폴더에 저장</button>
   </div>
@@ -546,13 +579,21 @@ $("go").addEventListener("click", async () => {
     $("title").textContent = RESULT.title || "";
     renderParts(RESULT.parts);
     $("tools").hidden = false;
-    setStatus(RESULT.parts.length + "개 파트 생성됨. 요약 프롬프트를 먼저 붙여넣고 파트를 순서대로 넣으세요.");
+    setStatus(RESULT.parts.length + "개 파트. 요약 프롬프트 복사 → 전체 복사(한 번에) 또는 파트별로 챗봇에 붙여넣으세요.");
   } catch (e) { setStatus("실패: " + e.message); }
   finally { $("go").disabled = false; }
 });
 
 $("copyPrompt").addEventListener("click", (e) => {
   if (RESULT) copyText(RESULT.summary_prompt, e.currentTarget);
+});
+
+$("copyAll").addEventListener("click", async (e) => {
+  if (!RESULT) return;
+  try {                                                       // 통합 transcript 한 번에 복사
+    const d = await api("GET", "/api/transcript/" + RESULT.result_id);
+    copyText(d.markdown, e.currentTarget);
+  } catch (err) { setStatus("전체 복사 실패: " + err.message); }
 });
 
 $("pick").addEventListener("click", async () => {
