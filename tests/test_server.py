@@ -356,6 +356,42 @@ def test_source_prompt_loads_real_file(monkeypatch):
     S._load_summary_prompt.cache_clear()
 
 
+def test_load_summary_prompt_empty_raises(tmp_path, monkeypatch):
+    """빈/공백-only 프롬프트 파일(번들 손상)을 "" 로 삼키면 summarize_video() 가
+    조용히 빈 프롬프트를 호스트에 반환(silent-failure). 빈 파일은 배포 결함이므로
+    raise — webapp M4 대칭(server.py 경로엔 그동안 이 가드가 없었다)."""
+    prompts = tmp_path / "prompts"
+    prompts.mkdir()
+    (prompts / "summarize_video.md").write_text("   \n", encoding="utf-8")  # 공백-only
+    monkeypatch.setattr(S, "_resource_dir", lambda: str(tmp_path))
+    S._load_summary_prompt.cache_clear()
+    try:
+        with pytest.raises(RuntimeError):
+            S._load_summary_prompt()
+    finally:
+        S._load_summary_prompt.cache_clear()   # 후속 테스트 오염 방지
+
+
+def test_main_preflight_rejects_empty_prompt(tmp_path, monkeypatch):
+    """main() 은 mcp.run() 전에 프롬프트를 preflight — 빈/누락이면 서빙 전 기동 실패.
+    __main__ 배선 순서(preflight → mcp.run)를 테스트로 고정(webapp M4 대칭·회귀 락).
+    빈파일 raise 만 있고 배선이 없으면, preflight 호출이 빠져도 아무도 못 잡는다."""
+    prompts = tmp_path / "prompts"
+    prompts.mkdir()
+    (prompts / "summarize_video.md").write_text("  \n", encoding="utf-8")  # 공백-only
+    monkeypatch.setattr(S, "_resource_dir", lambda: str(tmp_path))
+    S._load_summary_prompt.cache_clear()
+    reached = {"run": False}
+    monkeypatch.setattr(S.mcp, "run", lambda *a, **k: reached.__setitem__("run", True))
+    monkeypatch.setattr(S.storage, "cleanup_stale_temp", lambda *a, **k: None)
+    try:
+        with pytest.raises(RuntimeError):        # preflight 가 mcp.run 전에 잡아야
+            S.main()
+        assert not reached["run"], "preflight 없이 mcp.run 도달 — 빈 프롬프트 미검출"
+    finally:
+        S._load_summary_prompt.cache_clear()
+
+
 # ── Phase 5 CK-2: preflight 해석-인지 화해(_ytdlp_ready·번들 회귀차단) ──
 
 def test_preflight_accepts_bundled_ytdlp_via_env(monkeypatch, tmp_path):

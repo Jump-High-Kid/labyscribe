@@ -79,7 +79,8 @@ def _valid_chapters(chapters_meta) -> list:
         if not _finite(st):                     # inf/NaN/비수치/bool 배제(int() 예외·정렬 오염)
             continue
         title = c.get("title")
-        out.append((float(st), title if isinstance(title, str) else None))
+        # _finite(st) 가 위에서 유한 수치 보장 → float() 안전(mypy 는 _finite 내로잉 못 봄).
+        out.append((float(st), title if isinstance(title, str) else None))  # type: ignore[arg-type]
     return out
 
 

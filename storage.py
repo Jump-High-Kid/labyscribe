@@ -70,15 +70,16 @@ def run_capped(argv, *, timeout, want_stdout, stdout_cap, stderr_cap
     - TimeoutExpired 는 그대로 전파(호출자가 재시도/승격).
     """
     stderr_f = tempfile.TemporaryFile()
-    stdout_f = tempfile.TemporaryFile() if want_stdout else subprocess.DEVNULL
+    stdout_f = tempfile.TemporaryFile() if want_stdout else None
     try:
-        proc = subprocess.run(argv, stdout=stdout_f, stderr=stderr_f, timeout=timeout)
+        proc = subprocess.run(argv, stdout=stdout_f or subprocess.DEVNULL,
+                              stderr=stderr_f, timeout=timeout)
         # stderr 는 **뒤쪽 stderr_cap 바이트** — 오류·429 표식은 대개 끝에 있어 분류 정확도↑.
         err_size = stderr_f.seek(0, os.SEEK_END)
         stderr_f.seek(max(0, err_size - stderr_cap))
         stderr_text = stderr_f.read().decode("utf-8", "replace")
         stdout_bytes = None
-        if want_stdout:
+        if stdout_f is not None:            # want_stdout 참 ⟺ 파일 존재 — mypy 파일 타입 내로잉
             size = os.fstat(stdout_f.fileno()).st_size
             if size <= stdout_cap:
                 stdout_f.seek(0)
@@ -87,7 +88,7 @@ def run_capped(argv, *, timeout, want_stdout, stdout_cap, stderr_cap
         return proc.returncode, stdout_bytes, stderr_text
     finally:
         stderr_f.close()
-        if want_stdout:
+        if stdout_f is not None:
             stdout_f.close()
 
 

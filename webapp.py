@@ -23,7 +23,7 @@ import threading
 import traceback
 import webbrowser
 from functools import lru_cache
-from typing import Optional
+from typing import Optional, cast
 from urllib.parse import urlparse
 
 import extract as _extract
@@ -125,12 +125,12 @@ class Handler(http.server.BaseHTTPRequestHandler):
 
     @property
     def _state(self) -> AppState:
-        return self.server.state
+        return cast("_Server", self.server).state   # _Server 서브클래스 state(BaseServer 아님)
 
     # ── 가드 (브라우저발 공격 방어) ────────────────────────
 
     def _port(self) -> int:
-        return self.server.server_address[1]
+        return int(cast("_Server", self.server).server_address[1])   # (host, port)
 
     def _host_ok(self) -> bool:
         host = self.headers.get("Host", "")

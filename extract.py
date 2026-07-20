@@ -18,7 +18,7 @@ import subprocess
 import sys
 import time
 from dataclasses import dataclass
-from typing import Optional
+from typing import Optional, Tuple
 from urllib.parse import urlparse
 
 import chapters
@@ -76,7 +76,7 @@ ALLOWED_HOSTS = {
 }
 
 
-def validate_url(url):
+def validate_url(url: str) -> str:
     """https + 유튜브 도메인만 허용. 위반 시 ValueError (SSRF 차단)."""
     p = urlparse(url)
     if p.scheme != "https":
@@ -109,12 +109,12 @@ def is_allowed_tag(tag: str) -> bool:
     return re.fullmatch(r"[A-Za-z0-9_-]{1,35}", tag) is not None
 
 
-def _norm(tag):
+def _norm(tag: str) -> str:
     """BCP-47 기본언어: 'en-US'→'en', 'en-orig'→'en'."""
     return tag.split("-")[0]
 
 
-def _match_lang(track_dict, lang):
+def _match_lang(track_dict: dict, lang: str) -> Optional[str]:
     """정확일치 우선, 없으면 기본언어 prefix 폴백. 매칭 태그 또는 None."""
     if lang in track_dict:
         return lang
@@ -124,7 +124,7 @@ def _match_lang(track_dict, lang):
     return None
 
 
-def detect_orig_lang(info):
+def detect_orig_lang(info: dict) -> Optional[str]:
     """영상 원본 언어 감지: info.language → -orig 접미사 → 첫 수동자막. 없으면 None."""
     lang = info.get("language")
     if lang:
@@ -139,7 +139,7 @@ def detect_orig_lang(info):
     return None
 
 
-def _orig_auto_tag(autos, orig):
+def _orig_auto_tag(autos: dict, orig: str) -> Optional[str]:
     """원어 자동자막 태그: 기본 태그 > -orig > 같은 기본언어 첫 태그."""
     if orig in autos:
         return orig
@@ -151,7 +151,7 @@ def _orig_auto_tag(autos, orig):
     return None
 
 
-def select_track(info, prefer_langs=None):
+def select_track(info: dict, prefer_langs: Optional[list] = None) -> Optional[Tuple[str, bool, bool]]:
     """(tag, is_auto, translated) 또는 None. 원어 자막 우선.
 
     우선순위: ①수동 원어 ②수동 선호/임의 ③**원어 자동자막**(덜 손실·Claude가 번역)
@@ -188,16 +188,16 @@ _TAG = re.compile(r"<[^>]+>")
 _ROLLING_GAP_SEC = 5.0
 
 
-def _to_sec(h, m, s, ms):
+def _to_sec(h: Optional[str], m: str, s: str, ms: str) -> float:
     return int(h or 0) * 3600 + int(m) * 60 + int(s) + int(ms) / 1000.0
 
 
-def _fmt_ts(sec):
+def _fmt_ts(sec: float) -> str:
     sec = int(sec)
     return "%02d:%02d:%02d" % (sec // 3600, (sec % 3600) // 60, sec % 60)
 
 
-def _strip_tags(t):
+def _strip_tags(t: str) -> str:
     t = _TAG.sub("", t)
     for a, b in (("&nbsp;", " "), ("&amp;", "&"), ("&lt;", "<"),
                  ("&gt;", ">"), ("&#39;", "'"), ("&quot;", '"')):
@@ -205,12 +205,12 @@ def _strip_tags(t):
     return re.sub(r"\s+", " ", t).strip()
 
 
-def parse_srt(text):
+def parse_srt(text: str) -> list:
     """SRT → [{'start','end','text'}]. 타임스탬프 라인 기준 블록 파싱."""
     cues = []
     for block in re.split(r"\n\s*\n", text.strip()):
         lines = block.splitlines()
-        ts_idx = next((i for i, l in enumerate(lines) if "-->" in l), None)
+        ts_idx = next((i for i, ln in enumerate(lines) if "-->" in ln), None)
         if ts_idx is None:
             continue
         stamps = _TS.findall(lines[ts_idx])
@@ -224,7 +224,7 @@ def parse_srt(text):
     return cues
 
 
-def clean_srt(text, marker_interval=600):
+def clean_srt(text: str, marker_interval: int = 600) -> str:
     """정제 transcript: 태그제거 · 보수적 dedup · 10분 마커.
 
     dedup은 보수적 — 인접 정확중복, 또는 직전이 현재의 '단어경계 접두'일 때만
@@ -233,7 +233,7 @@ def clean_srt(text, marker_interval=600):
     items = [(c["start"], _strip_tags(c["text"])) for c in parse_srt(text)]
     items = [(s, t) for s, t in items if t]
 
-    kept = []  # [[start, text], ...]
+    kept: list = []  # [[start, text], ...]
     for start, text in items:
         if kept:
             prev = kept[-1][1]
@@ -254,7 +254,7 @@ def clean_srt(text, marker_interval=600):
     return "\n".join(lines)
 
 
-def quality_ok(text, min_chars=30):
+def quality_ok(text: str, min_chars: int = 30) -> bool:
     """정제 후 최소 문자수 게이트 — 빈/노이즈 자막 감지(길이 검열 아님).
 
     하한을 낮게(30) 둬 짧은 정상 영상도 통과시킨다. 태그 잔존 쓰레기는
@@ -267,23 +267,23 @@ def quality_ok(text, min_chars=30):
 _BRACKET_ONLY_RE = re.compile(r"^\[[^\]]*\]$")
 
 
-def _speech_text(transcript):
+def _speech_text(transcript: str) -> str:
     """마커·음향 이벤트([Music] 등)를 뺀 실질 발화 텍스트 — quality 판정 대상.
 
     순수 음악/박수만 있는 영상이 가짜 성공(silent-failure)하지 않게 한다.
     """
-    return "\n".join(l for l in transcript.splitlines()
-                     if l.strip() and not _BRACKET_ONLY_RE.match(l.strip()))
+    return "\n".join(ln for ln in transcript.splitlines()
+                     if ln.strip() and not _BRACKET_ONLY_RE.match(ln.strip()))
 
 
-def safe_filename(title, max_len=100):
+def safe_filename(title: str, max_len: int = 100) -> str:
     """파일명 allowlist(영숫자·한글·space·- _) · 나머지 치환 · 길이 상한."""
     out = [ch if (ch.isalnum() or ch in " -_") else " " for ch in title]
     s = re.sub(r"\s+", " ", "".join(out)).strip()
     return s[:max_len].strip()
 
 
-def _parse_vtt_cues(raw):
+def _parse_vtt_cues(raw: str) -> list:
     """WebVTT → [(start, end, line)]. 큐 body 각 줄이 개별 항목.
 
     `-->` 포함 첫 줄만 타임스탬프로 파싱(본문 시간표기 오인 방지) · start<=end 검증 ·
@@ -293,7 +293,7 @@ def _parse_vtt_cues(raw):
     cues = []
     for block in re.split(r"\n\s*\n", raw.strip()):
         lines = block.splitlines()
-        ts_idx = next((i for i, l in enumerate(lines) if "-->" in l), None)
+        ts_idx = next((i for i, ln in enumerate(lines) if "-->" in ln), None)
         if ts_idx is None:
             continue                                # 헤더·NOTE·STYLE
         stamps = _TS.findall(lines[ts_idx])
@@ -305,8 +305,8 @@ def _parse_vtt_cues(raw):
         body = lines[ts_idx + 1:]
         # 인라인 타이밍 태그(<00:..>) = 롤링 자동자막 → 줄별 항목(2줄창 dedup 위해).
         # 없으면 정적 자막 → 큐 내 줄 병합(단어 래핑 복원).
-        if any(re.search(r"<\d\d:\d\d:\d\d", l) for l in body):
-            parts = [_strip_tags(l) for l in body]
+        if any(re.search(r"<\d\d:\d\d:\d\d", ln) for ln in body):
+            parts = [_strip_tags(ln) for ln in body]
         else:
             parts = [_strip_tags(" ".join(body))]
         for t in parts:
@@ -315,14 +315,14 @@ def _parse_vtt_cues(raw):
     return cues
 
 
-def _dedup_rolling(cues):
+def _dedup_rolling(cues: list) -> list:
     """롤링 중복 제거 → [(start, text)]. 인접 kept 마지막과만 비교(원거리 보존).
 
     ① 정확중복 → skip ② 시간인접 + kept가 현재의 단어경계 접두 → 대체(성장)
     ③ 시간인접 + 현재가 kept의 접두 → skip ④ else → append(충돌 시 보존 우선).
     접두 규칙 ②③은 시간 인접(gap<=_ROLLING_GAP_SEC)에만 — 원거리 정상반복 보존.
     """
-    kept = []  # [[start, end, text], ...]
+    kept: list = []  # [[start, end, text], ...]
     for start, end, text in cues:
         if kept:
             p_start, p_end, prev = kept[-1]
@@ -340,7 +340,7 @@ def _dedup_rolling(cues):
     return [(s, t) for s, _, t in kept]
 
 
-def parse_vtt(raw, marker_interval=600):
+def parse_vtt(raw: str, marker_interval: int = 600) -> str:
     """WebVTT → 정제 transcript(롤링 dedup·태그 strip·10분 마커). 순수·raise 안 함."""
     lines, next_marker = [], marker_interval
     for start, text in _dedup_rolling(_parse_vtt_cues(raw)):
@@ -374,7 +374,7 @@ def _ytdlp_bin() -> str:
     return "yt-dlp"
 
 
-def run_ytdlp_json(url):
+def run_ytdlp_json(url: str) -> dict:
     # --no-playlist: 단일 영상만(플레이리스트/채널 자원 고갈 차단·D-K).
     # run_capped 경유(-J stdout tempfile 리다이렉트·64MB 캡 초과 시 None·메모리 축적 차단).
     # timeout: 무한 블로킹 차단 → TimeoutExpired 를 RuntimeError 로 승격하면
@@ -396,7 +396,8 @@ def run_ytdlp_json(url):
         raise RuntimeError("yt-dlp 정보 JSON 파싱 실패: %s" % e)
 
 
-def download_sub(url, tag, outdir, vid, fmt="vtt", retries=3):
+def download_sub(url: str, tag: str, outdir: str, vid: str, fmt: str = "vtt",
+                 retries: int = 3) -> Tuple[Optional[str], str]:
     """선정 트랙을 네이티브 fmt로 다운로드. 반환 (sub_path, status).
 
     status: 'ok'(파일 확보) · 'failed'(429/네트워크로 재시도 소진 — 트랙은 있음) ·
@@ -441,7 +442,7 @@ def download_sub(url, tag, outdir, vid, fmt="vtt", retries=3):
 
 # ── v2 파트 렌더 헬퍼 (오케스트레이션 — 순수 chapters/render_md 조합) ────
 
-def _render_parts(cues, chapters_meta, video_meta):
+def _render_parts(cues: list, chapters_meta, video_meta: dict) -> tuple:
     """cues + chapters 메타 → (parts, part_mds, transcript_md). 순수 조합(raise 위임)."""
     parts = chapters.split(cues, chapters_meta)
     part_mds = tuple(render_md.part(p, len(parts), video_meta) for p in parts)
@@ -449,7 +450,7 @@ def _render_parts(cues, chapters_meta, video_meta):
     return parts, part_mds, transcript_md
 
 
-def _part_records(parts, part_mds):
+def _part_records(parts, part_mds) -> tuple:
     """webapp 서빙용 파트 레코드(markdown 포함)."""
     return tuple({
         "part_no": p.part_no, "chapter_no": p.chapter_no, "title": p.title,
@@ -457,7 +458,7 @@ def _part_records(parts, part_mds):
     } for p, md in zip(parts, part_mds))
 
 
-def _meta_parts_field(parts, part_mds):
+def _meta_parts_field(parts, part_mds) -> list:
     """meta.json 저장용 파트 필드(markdown 제외·바이트만)."""
     return [{
         "part_no": p.part_no, "chapter_no": p.chapter_no,
@@ -469,7 +470,7 @@ _MAX_CHAPTERS_STORED = 500       # meta 저장 챕터 항목 상한(과대 paylo
 _MAX_CHAPTER_TITLE = 200         # 챕터 제목 저장 길이 상한
 
 
-def _project_chapters(chapters_meta):
+def _project_chapters(chapters_meta) -> Optional[list]:
     """meta 저장용 chapters 투영 — 화이트리스트 필드 + 항목·제목 길이 상한(과대 payload 차단)."""
     if not isinstance(chapters_meta, list):
         return None
@@ -485,7 +486,7 @@ def _project_chapters(chapters_meta):
 _MARKER_LINE_RE = re.compile(r"^\[\d\d:\d\d:\d\d\]$")   # 10분 마커 줄(폴백 가짜 cue 배제용)
 
 
-def _cues_from_cached(cached_dir, c_meta, c_transcript):
+def _cues_from_cached(cached_dir: str, c_meta: dict, c_transcript: str) -> list:
     """v1 캐시 증분용 cue 확보 — raw vtt 재파싱(무네트워크). 부재·손상 시 transcript 폴백.
 
     폴백 조건 = raw 파일 부재(OSError) OR 열렸으나 파싱 cue 0개(잘림·손상). 후자를 폴백하지
@@ -509,7 +510,8 @@ def _cues_from_cached(cached_dir, c_meta, c_transcript):
             if line.strip() and not _MARKER_LINE_RE.match(line.strip())]
 
 
-def _incremental_v2(directory, c_meta, c_transcript, chapters_meta, root):
+def _incremental_v2(directory: str, c_meta: dict, c_transcript: str, chapters_meta,
+                    root: str) -> Tuple[dict, tuple]:
     """v1/미완결 저장본에 v2 `.md` 세트 증분 생성 → (merged_meta, part_records).
 
     cue = raw 재파싱(무네트워크). chapters_meta = 캐시히트에도 이미 조회된 `info` 의 것을
@@ -528,7 +530,8 @@ def _incremental_v2(directory, c_meta, c_transcript, chapters_meta, root):
     return merged, _part_records(parts, part_mds)
 
 
-def run_extract(url, lang, output_root, *, emit_markdown=False):
+def run_extract(url: str, lang: Optional[str], output_root: str, *,
+                emit_markdown: bool = False) -> ExtractResult:
     """오케스트레이션 SSOT — main·server·webapp 공통. URL검증→정보수집→트랙선정→캐시조회→
     temp확보→raw보존→json3 best-effort→parse_vtt→quality 게이트→[v2 챕터분할]→atomic 발행.
 
@@ -572,7 +575,7 @@ def run_extract(url, lang, output_root, *, emit_markdown=False):
     if not vid:                            # id 누락 = 정보 계약 위반 → None/ 저장본 생성 차단
         return ExtractResult(EXIT_UNAVAILABLE,
                              "UNAVAILABLE 영상 id 없음(정보 수집 이상).", {}, None)
-    langs = [l.strip() for l in lang.split(",") if l.strip()] if lang else None
+    langs = [ln.strip() for ln in lang.split(",") if ln.strip()] if lang else None
     orig = detect_orig_lang(info)
     meta = {
         "id": vid, "title": info.get("title"), "uploader": info.get("uploader"),
@@ -616,12 +619,12 @@ def run_extract(url, lang, output_root, *, emit_markdown=False):
                     EXIT_OK, "OK v2 캐시 히트(id=%s lang=%s parts=%d) → %s"
                     % (vid, tag, len(cached_parts), cached),
                     c_meta, c_transcript, cached_parts)
-            merged, part_records = _incremental_v2(cached, c_meta, c_transcript,
-                                                   info.get("chapters"), root)
+            merged, inc_parts = _incremental_v2(cached, c_meta, c_transcript,
+                                                info.get("chapters"), root)
             return ExtractResult(
                 EXIT_OK, "OK v2 증분 생성(id=%s lang=%s parts=%d) → %s"
-                % (vid, tag, len(part_records), cached),
-                merged, c_transcript, part_records)
+                % (vid, tag, len(inc_parts), cached),
+                merged, c_transcript, inc_parts)
 
     # ⑦ 디스크 총량 상한(D3-E) — HARD 거부 · SOFT 경고 · 캐시 히트는 면제(위에서 반환)
     used = storage.disk_usage(root)
@@ -690,9 +693,9 @@ def run_extract(url, lang, output_root, *, emit_markdown=False):
                 "id=%s lang=%s" % (vid, tag), meta, None)
 
         # e2 [v2] emit_markdown 이면 챕터 분할·렌더 (staging 안 — AC-13). 순수 chapters/render_md.
-        part_records = None
-        part_mds = None
-        transcript_md = None
+        part_records: Optional[tuple] = None
+        part_mds: Optional[tuple] = None
+        transcript_md: Optional[str] = None
         if emit_markdown:
             cues = _dedup_rolling(_parse_vtt_cues(raw))
             parts, part_mds, transcript_md = _render_parts(cues, info.get("chapters"), meta)
@@ -705,7 +708,7 @@ def run_extract(url, lang, output_root, *, emit_markdown=False):
         meta["status"] = "ok"
         meta["transcript"] = "transcript.txt"
         storage.write_text_synced(os.path.join(temp, "transcript.txt"), transcript)
-        if emit_markdown:
+        if transcript_md is not None:   # emit_markdown 일 때만 set(≠None) — mypy 내로잉·거동 동일
             storage.stage_v2_files(temp, part_mds, transcript_md)
         storage.write_text_synced(os.path.join(temp, "meta.json"),
                                   json.dumps(meta, ensure_ascii=False, indent=2))
@@ -750,7 +753,7 @@ def run_extract(url, lang, output_root, *, emit_markdown=False):
         shutil.rmtree(temp, ignore_errors=True)   # 발행성공=no-op·실패=흔적 정리
 
 
-def main(argv=None):
+def main(argv: Optional[list] = None) -> int:
     ap = argparse.ArgumentParser(description="유튜브 자막 추출 → transcript")
     ap.add_argument("url")
     ap.add_argument("--lang", default=None,

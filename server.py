@@ -208,9 +208,15 @@ def _resource_dir() -> str:
 
 @lru_cache(maxsize=1)
 def _load_summary_prompt() -> str:
+    # 부재 = FileNotFoundError 전파(삼키지 않음). 빈/공백-only = 배포 결함(번들 손상)이므로
+    # fail-fast raise — "" 반환은 summarize_video() 가 조용히 빈 프롬프트를 호스트에 넘겨
+    # silent-failure(webapp M4 대칭·이 v1 MCP 경로엔 그동안 가드가 없었다).
     path = os.path.join(_resource_dir(), "prompts", "summarize_video.md")
     with open(path, encoding="utf-8") as f:
-        return f.read()
+        text = f.read()
+    if not text.strip():
+        raise RuntimeError("요약 프롬프트가 비어 있습니다: %s" % path)
+    return text
 
 
 # ── MCP 프리미티브 등록(얇은 래퍼) ──────────────────────────────
@@ -237,7 +243,19 @@ def summarize_video() -> str:
     return _load_summary_prompt()
 
 
-if __name__ == "__main__":
+def main() -> None:
+    """MCP stdio 서버 기동 — 프롬프트 번들 preflight(M4 대칭) 후 서빙.
+
+    __main__ 에서 분리 = 배선 순서(preflight → cleanup → mcp.run)를 테스트로 고정 가능
+    (webapp.main 대칭). preflight 없이 mcp.run 에 도달하면 빈 프롬프트가 silent 로 서빙됨.
+    """
+    # preflight — 프롬프트 번들 누락/빈파일이면 기동 실패(부재/빈파일=raise·M4 대칭).
+    # 서버가 도구를 서빙하기 전에 배포 결함을 부트에서 드러낸다(silent-failure 0).
+    _load_summary_prompt()
     # 시작 시 오래된 stale temp 정리(라이브 temp 는 age-based 로 보존·D3-F).
     storage.cleanup_stale_temp(_resolve_output_dir(), _STALE_TEMP_MAX_AGE_SEC)
     mcp.run()   # stdio 기본
+
+
+if __name__ == "__main__":
+    main()
