@@ -39,3 +39,29 @@ jobs:
           name: labyscribe-win-mcpb
           path: labyscribe-win.mcpb
           if-no-files-found: error
+
+  # v2 웹UI 단독 실행파일(webapp.py onedir + 번들 yt-dlp.exe) — 위 .mcpb job 과 병렬·독립.
+  # build/build_webapp_windows.sh 내부 [5/5] frozen 스모크가 hard gate(실패=job RED).
+  windows-webui:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0  # v7.0.0
+
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1  # v6.3.0
+        with:
+          python-version: '3.12'
+          architecture: x64
+
+      - name: gpg preflight
+        shell: bash
+        run: command -v gpg || choco install gnupg -y
+
+      - name: build Windows webapp exe
+        shell: bash
+        run: bash build/build_webapp_windows.sh          # 내부 frozen 스모크가 hard gate
+
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a  # v7.0.1
+        with:
+          name: labyscribe-webui-win
+          path: dist/labyscribe-web                        # onedir → upload-artifact 가 zip
+          if-no-files-found: error
