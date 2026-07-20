@@ -1,0 +1,371 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="color-scheme" content="light dark">
+<title>labyscribe 사용 설명서</title>
+<style>
+/* ── 토큰: 라이트 기본 → 미디어쿼리(다크) → data-theme 오버라이드 순 ── */
+:root{
+  --paper:#eef1f7; --card:#ffffff; --ink:#161b24; --muted:#59616f; --line:#dfe4ee;
+  --accent:#2f63e6; --accent-ink:#1e49b8; --accent-soft:#e8efff;
+  --ok:#188a4a; --ok-soft:#e4f6ec; --ok-line:#bfe6cd;
+  --warn:#a9721a; --warn-soft:#fbf1dd; --warn-line:#eddcb4;
+  --shadow:0 1px 2px rgba(20,30,60,.05), 0 8px 24px rgba(20,30,60,.06);
+  --font-sans:-apple-system,BlinkMacSystemFont,"Apple SD Gothic Neo","Segoe UI",
+    "Malgun Gothic","Noto Sans KR",Pretendard,system-ui,sans-serif;
+  --font-mono:ui-monospace,SFMono-Regular,"SF Mono",Menlo,Consolas,"Segoe UI Mono",monospace;
+}
+@media (prefers-color-scheme:dark){
+  :root{
+    --paper:#0b0d11; --card:#161922; --ink:#e6e9ef; --muted:#98a0b3; --line:#262b36;
+    --accent:#6ea8fe; --accent-ink:#a9caff; --accent-soft:rgba(110,168,254,.13);
+    --ok:#3fb950; --ok-soft:rgba(63,185,80,.13); --ok-line:rgba(63,185,80,.32);
+    --warn:#e0b357; --warn-soft:rgba(224,179,87,.12); --warn-line:rgba(224,179,87,.3);
+    --shadow:0 1px 2px rgba(0,0,0,.4), 0 10px 30px rgba(0,0,0,.35);
+  }
+}
+:root[data-theme="light"]{
+  --paper:#eef1f7; --card:#ffffff; --ink:#161b24; --muted:#59616f; --line:#dfe4ee;
+  --accent:#2f63e6; --accent-ink:#1e49b8; --accent-soft:#e8efff;
+  --ok:#188a4a; --ok-soft:#e4f6ec; --ok-line:#bfe6cd;
+  --warn:#a9721a; --warn-soft:#fbf1dd; --warn-line:#eddcb4;
+  --shadow:0 1px 2px rgba(20,30,60,.05), 0 8px 24px rgba(20,30,60,.06);
+}
+:root[data-theme="dark"]{
+  --paper:#0b0d11; --card:#161922; --ink:#e6e9ef; --muted:#98a0b3; --line:#262b36;
+  --accent:#6ea8fe; --accent-ink:#a9caff; --accent-soft:rgba(110,168,254,.13);
+  --ok:#3fb950; --ok-soft:rgba(63,185,80,.13); --ok-line:rgba(63,185,80,.32);
+  --warn:#e0b357; --warn-soft:rgba(224,179,87,.12); --warn-line:rgba(224,179,87,.3);
+  --shadow:0 1px 2px rgba(0,0,0,.4), 0 10px 30px rgba(0,0,0,.35);
+}
+
+*{box-sizing:border-box;}
+html{-webkit-text-size-adjust:100%;}
+body{margin:0;background:var(--paper);color:var(--ink);
+  font-family:var(--font-sans);font-size:16px;line-height:1.7;
+  letter-spacing:-.006em;-webkit-font-smoothing:antialiased;}
+.wrap{max-width:720px;margin:0 auto;padding:clamp(1.5rem,1rem+3vw,3rem) 1.25rem 4rem;}
+
+/* ── 헤더 ── */
+.hero{margin-bottom:2.25rem;}
+.eyebrow{display:inline-block;font-size:.72rem;font-weight:700;letter-spacing:.2em;
+  text-transform:uppercase;color:var(--accent-ink);background:var(--accent-soft);
+  padding:.32rem .6rem;border-radius:999px;margin-bottom:1rem;}
+h1{font-size:clamp(2.1rem,1.4rem+3vw,3rem);line-height:1.05;margin:0 0 .6rem;
+  font-weight:800;letter-spacing:-.03em;text-wrap:balance;}
+h1 .dim{color:var(--muted);font-weight:800;}
+.lede{font-size:clamp(1.05rem,1rem+.5vw,1.2rem);color:var(--muted);margin:0;max-width:36em;
+  text-wrap:pretty;}
+
+/* ── "이게 뭐예요" 카드 ── */
+.what{background:var(--card);border:1px solid var(--line);border-radius:16px;
+  padding:1.4rem 1.5rem;margin:2rem 0 2.75rem;box-shadow:var(--shadow);}
+.what h2{margin:0 0 .7rem;font-size:1.1rem;font-weight:700;letter-spacing:-.01em;}
+.what ul{margin:0;padding:0;list-style:none;display:flex;flex-direction:column;gap:.6rem;}
+.what li{display:flex;gap:.7rem;align-items:flex-start;font-size:.97rem;color:var(--ink);}
+.what li b{color:var(--accent-ink);font-weight:700;}
+.dot{flex:none;width:.5rem;height:.5rem;border-radius:50%;background:var(--accent);
+  margin-top:.55rem;}
+
+/* ── 섹션 헤딩 ── */
+.sec-label{font-size:.74rem;font-weight:700;letter-spacing:.16em;text-transform:uppercase;
+  color:var(--muted);margin:2.75rem 0 1rem;padding-bottom:.5rem;border-bottom:1px solid var(--line);}
+
+/* ── 스텝(번호 = 실제 순서) ── */
+.step{display:grid;grid-template-columns:2.5rem 1fr;gap:1rem;margin:0 0 1.9rem;
+  align-items:start;}
+.num{align-self:start;width:2.5rem;height:2.5rem;border-radius:12px;display:grid;place-items:center;
+  font-weight:800;font-size:1.05rem;color:#fff;background:var(--accent);
+  box-shadow:var(--shadow);font-variant-numeric:tabular-nums;}
+.step-body{min-width:0;}
+.step-body h3{margin:.35rem 0 .5rem;font-size:1.15rem;font-weight:700;letter-spacing:-.015em;}
+.step-body p{margin:.5rem 0;color:var(--ink);}
+.step-body p.muted{color:var(--muted);font-size:.94rem;}
+
+/* ── OS 두 갈래 ── */
+.split{display:grid;grid-template-columns:1fr;gap:1rem;margin:.5rem 0;}
+@media(min-width:620px){.split{grid-template-columns:1fr 1fr;}}
+.os{background:var(--card);border:1px solid var(--line);border-radius:14px;padding:1.1rem 1.2rem;}
+.os h4{margin:0 0 .6rem;font-size:.95rem;font-weight:700;display:flex;align-items:center;gap:.45rem;}
+.os h4 .tag{font-size:.66rem;font-weight:700;letter-spacing:.06em;padding:.15rem .45rem;border-radius:6px;
+  background:var(--accent-soft);color:var(--accent-ink);text-transform:uppercase;}
+.os ol{margin:0;padding-left:1.15rem;display:flex;flex-direction:column;gap:.4rem;font-size:.93rem;}
+.os ol li{padding-left:.2rem;}
+.os ol li::marker{color:var(--accent);font-weight:700;}
+
+/* ── 코드/명령 ── */
+code{font-family:var(--font-mono);font-size:.86em;background:var(--accent-soft);
+  color:var(--accent-ink);padding:.12em .4em;border-radius:6px;word-break:break-word;}
+.cmd{font-family:var(--font-mono);font-size:.84rem;background:var(--card);border:1px solid var(--line);
+  border-radius:9px;padding:.6rem .8rem;margin:.5rem 0;overflow-x:auto;color:var(--ink);
+  white-space:pre;}
+.file{font-family:var(--font-mono);font-weight:600;color:var(--accent-ink);
+  background:var(--accent-soft);padding:.1em .4em;border-radius:6px;font-size:.9em;}
+
+/* ── 콜아웃 ── */
+.note{border-radius:12px;padding:.85rem 1rem .85rem 1.1rem;margin:.9rem 0;font-size:.92rem;
+  border:1px solid var(--line);background:var(--card);position:relative;}
+.note .lbl{font-weight:700;font-size:.78rem;letter-spacing:.05em;text-transform:uppercase;
+  display:block;margin-bottom:.25rem;}
+.note.tip{background:var(--ok-soft);border-color:var(--ok-line);}
+.note.tip .lbl{color:var(--ok);}
+.note.warn{background:var(--warn-soft);border-color:var(--warn-line);}
+.note.warn .lbl{color:var(--warn);}
+.note.info .lbl{color:var(--accent-ink);}
+.note p{margin:.3rem 0;}
+.note code{background:rgba(0,0,0,.06);}
+@media (prefers-color-scheme:dark){.note code{background:rgba(255,255,255,.08);}}
+:root[data-theme="dark"] .note code{background:rgba(255,255,255,.08);}
+:root[data-theme="light"] .note code{background:rgba(0,0,0,.06);}
+
+/* ── 앱 실제 화면 재현(항상 앱의 다크 스킨 · 테마 무관) ── */
+.shot{margin:1rem 0 .4rem;border-radius:14px;overflow:hidden;border:1px solid #2a2f3a;
+  box-shadow:0 10px 30px rgba(0,0,0,.28);}
+.shot .bar{background:#0f1115;padding:.55rem .8rem;display:flex;gap:.42rem;align-items:center;
+  border-bottom:1px solid #20242e;}
+.shot .bar i{width:.62rem;height:.62rem;border-radius:50%;background:#3a3f4b;display:block;}
+.shot .bar .addr{margin-left:.5rem;font-family:var(--font-mono);font-size:.72rem;color:#7d8598;}
+.app{background:#0f1115;color:#e6e9ef;padding:1.4rem 1.3rem 1.6rem;
+  font-family:var(--font-sans);}
+.app .wm{font-size:1.25rem;font-weight:800;letter-spacing:-.02em;margin:0 0 .15rem;}
+.app .wmsub{color:#98a0b3;font-size:.8rem;margin:0 0 1.1rem;}
+.app .inrow{display:flex;gap:.5rem;}
+.app .inbox{flex:1;background:#181b22;border:1px solid #262b36;border-radius:9px;
+  padding:.6rem .75rem;color:#6f7789;font-size:.86rem;font-family:var(--font-mono);
+  white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
+.app .btn{background:#6ea8fe;color:#0b1020;border:0;border-radius:9px;padding:.6rem 1rem;
+  font-weight:700;font-size:.85rem;font-family:inherit;}
+.app .ghost{background:#181b22;color:#e6e9ef;border:1px solid #262b36;border-radius:9px;
+  padding:.55rem .8rem;font-size:.82rem;font-weight:600;position:relative;font-family:inherit;}
+.app .ghost.dis{opacity:.45;}
+.app .tools{display:flex;gap:.5rem;flex-wrap:wrap;margin:1.1rem 0 .4rem;}
+.app .badge{position:absolute;top:-.55rem;right:-.55rem;width:1.25rem;height:1.25rem;border-radius:50%;
+  background:#f0b429;color:#1a1205;font-size:.72rem;font-weight:800;display:grid;place-items:center;
+  box-shadow:0 2px 6px rgba(0,0,0,.4);}
+.app .ghost.hot{outline:2px solid #f0b429;outline-offset:1px;}
+.app .vtitle{font-weight:700;margin:1.2rem 0 .55rem;font-size:.95rem;}
+.app ul.parts{list-style:none;padding:0;margin:0;display:flex;flex-direction:column;gap:.45rem;}
+.app ul.parts li{display:flex;align-items:center;gap:.7rem;background:#181b22;border:1px solid #262b36;
+  border-radius:9px;padding:.55rem .75rem;}
+.app .pmeta{flex:1;min-width:0;}
+.app .pno{font-weight:700;font-size:.86rem;}
+.app .pch{color:#98a0b3;font-size:.78rem;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+.app .pkb{color:#98a0b3;font-size:.72rem;font-variant-numeric:tabular-nums;}
+.app .pcopy{background:#6ea8fe;color:#0b1020;border:0;border-radius:7px;padding:.4rem .7rem;
+  font-size:.78rem;font-weight:700;font-family:inherit;}
+.shot-cap{font-size:.82rem;color:var(--muted);margin:.1rem 0 1.2rem;text-align:center;}
+
+/* ── 안전 푸터 ── */
+.safe{background:var(--card);border:1px solid var(--line);border-radius:16px;padding:1.3rem 1.5rem;
+  margin-top:2.5rem;box-shadow:var(--shadow);}
+.safe h2{margin:0 0 .6rem;font-size:1.05rem;font-weight:700;}
+.safe p{margin:.4rem 0;color:var(--muted);font-size:.93rem;}
+.safe b{color:var(--ink);}
+.foot{margin-top:2rem;text-align:center;color:var(--muted);font-size:.8rem;}
+.foot code{font-size:.9em;}
+
+a{color:var(--accent-ink);text-underline-offset:2px;}
+a:focus-visible,button:focus-visible{outline:2px solid var(--accent);outline-offset:2px;border-radius:4px;}
+
+/* ── 인쇄(A4) ── */
+@media print{
+  body{background:#fff;color:#000;font-size:11pt;}
+  .wrap{max-width:100%;padding:0;}
+  .what,.os,.note,.safe,.step{break-inside:avoid;}
+  .shot{break-inside:avoid;box-shadow:none;}
+  .foot .theme-hint{display:none;}
+}
+@media (prefers-reduced-motion:reduce){*{animation:none!important;transition:none!important;}}
+</style>
+</head>
+<body>
+
+<div class="wrap">
+
+  <header class="hero">
+    <span class="eyebrow">사용 설명서 · 웹 UI</span>
+    <h1>labyscribe<span class="dim"> 쓰는 법</span></h1>
+    <p class="lede">유튜브 영상을 <b>글로 뽑아서</b>, 평소 쓰는 AI 챗봇에게 <b>요약시키는</b> 프로그램이에요. 컴퓨터를 잘 몰라도 그대로 따라 하면 돼요.</p>
+  </header>
+
+  <section class="what">
+    <h2>한눈에 — 이게 뭐예요?</h2>
+    <ul>
+      <li><span class="dot"></span><div>유튜브 영상에는 대사가 <b>자막(글)</b>로 들어 있어요. labyscribe는 그 자막을 내 컴퓨터로 깔끔하게 뽑아 줘요.</div></li>
+      <li><span class="dot"></span><div>뽑은 글을 <b>ChatGPT·Claude 같은 AI 챗봇</b>에 붙여넣으면, 그 AI가 영상 내용을 요약해 줘요.</div></li>
+      <li><span class="dot"></span><div>labyscribe는 <b>글 뽑는 일만</b> 해요. 요약은 내가 이미 쓰는 AI가 하니까 <b>추가 비용이 없어요.</b></div></li>
+      <li><span class="dot"></span><div>전부 <b>내 컴퓨터 안</b>에서만 돌아가요. 인터넷에 공개되지 않아요.</div></li>
+    </ul>
+  </section>
+
+  <p class="sec-label">시작하기 전에 — 준비물</p>
+  <div class="split">
+    <div class="os">
+      <h4><span class="tag">Windows</span> 준비 끝</h4>
+      <p style="margin:0;font-size:.93rem;color:var(--muted)">받은 실행파일만 있으면 바로 돼요. 따로 깔 게 없어요.</p>
+    </div>
+    <div class="os">
+      <h4><span class="tag">MAC OS</span> 두 가지 먼저</h4>
+      <p style="margin:0;font-size:.93rem;color:var(--muted)"><b style="color:var(--ink)">Python</b>(3.10 이상)과 <b style="color:var(--ink)">yt-dlp</b>를 먼저 깔아야 해요. 방법은 STEP 1 아래에 있어요.</p>
+    </div>
+  </div>
+  <div class="note info" style="margin-top:1rem">
+    <span class="lbl">그리고 공통으로</span>
+    <p>인터넷 연결, 요약할 <b>유튜브 영상 주소</b>, 그리고 평소 쓰는 <b>AI 챗봇 한 개</b>(ChatGPT·Claude 등)면 충분해요.</p>
+  </div>
+
+  <p class="sec-label">STEP 1 · 프로그램 설치하기</p>
+  <div class="split">
+    <div class="os">
+      <h4><span class="tag">Windows</span></h4>
+      <ol>
+        <li>GitHub 릴리스에서 <span class="file">labyscribe-webui-win.zip</span> 을 내려받아요.</li>
+        <li>압축을 풀어요.</li>
+        <li>안에 있는 <span class="file">labyscribe-web.exe</span> 를 <b>더블클릭</b>해요.</li>
+      </ol>
+    </div>
+    <div class="os">
+      <h4><span class="tag">MAC OS</span></h4>
+      <ol>
+        <li>저장소를 <b>ZIP으로 내려받아</b> 압축을 풀어요.</li>
+        <li>폴더 안 <span class="file">labyscribe-web.command</span> 를 <b>더블클릭</b>해요.</li>
+        <li>프로그램이 Python·yt-dlp가 있는지 먼저 확인해요. 없으면 <b>설치법을 알려주고 멈춰요</b>(자동으로 깔지는 않아요).</li>
+      </ol>
+    </div>
+  </div>
+
+  <div class="note warn">
+    <span class="lbl">주의 · 처음 열 때 경고가 떠요 (정상이에요)</span>
+    <p><b>Windows</b> — “Windows의 PC를 보호했습니다” 창이 뜨면 <b>추가 정보 → 실행</b>을 눌러요.</p>
+    <p><b>MAC OS</b> — “확인할 수 없는 개발자” 라고 막히면, 그 파일을 <b>마우스 오른쪽 클릭(또는 Control+클릭) → 열기 → 열기</b> 순서로 눌러요. (한 번만 하면 다음부터는 그냥 열려요.)</p>
+    <p style="color:var(--muted);font-size:.86rem;margin-top:.5rem">둘 다 프로그램이 “서명”이 안 돼서 뜨는 안내예요. 이 저장소에서 받은 파일이면 안전해요.</p>
+  </div>
+
+  <div class="note info">
+    <span class="lbl">MAC OS만 · Python과 yt-dlp 설치</span>
+    <p><b>Python 3.10 이상</b> — <a href="https://www.python.org/downloads/">python.org</a> 에서 받거나, Homebrew가 있으면 아래 한 줄:</p>
+    <div class="cmd">brew install python</div>
+    <p><b>yt-dlp</b> — 아래 중 하나를 터미널에 입력해요:</p>
+    <div class="cmd">brew install yt-dlp        # Homebrew가 있으면
+python3 -m pip install -U yt-dlp   # 또는 이 방법</div>
+  </div>
+
+  <p class="sec-label">STEP 2 · 프로그램 열기</p>
+  <div class="step">
+    <div class="num">2</div>
+    <div class="step-body">
+      <h3>실행하면 브라우저가 저절로 열려요</h3>
+      <p>실행하면 <b>검은 창</b>(터미널·콘솔)이 뜨고, 잠시 뒤 브라우저가 <code>http://127.0.0.1:8760/</code> 주소를 <b>자동으로</b> 열어요. 아래 같은 화면이 나오면 성공이에요.</p>
+
+      <div class="shot" role="img" aria-label="labyscribe 첫 화면 — 주소 입력칸과 추출 버튼">
+        <div class="bar"><i></i><i></i><i></i><span class="addr">127.0.0.1:8760</span></div>
+        <div class="app">
+          <p class="wm">labyscribe</p>
+          <p class="wmsub">유튜브 자막을 챕터별 Markdown 으로 추출 → 챗봇에 붙여넣어 요약</p>
+          <div class="inrow">
+            <div class="inbox">https://youtu.be/… 붙여넣기</div>
+            <button class="btn" type="button" tabindex="-1">추출</button>
+          </div>
+        </div>
+      </div>
+      <p class="shot-cap">▲ 실제 첫 화면 (앱 화면 그대로)</p>
+
+      <div class="note tip">
+        <span class="lbl">팁 · 브라우저가 안 열리면</span>
+        <p>검은 창에 적힌 주소(<code>http://127.0.0.1:8760/</code> 처럼 생긴 줄)를 복사해서, 브라우저 주소창에 <b>직접 붙여넣어</b> 열면 돼요. (포트 번호 8760은 상황에 따라 다를 수 있어요 — 창에 적힌 대로 따라가요.)</p>
+      </div>
+    </div>
+  </div>
+
+  <p class="sec-label">STEP 3 · 영상 주소 넣고 “추출”</p>
+  <div class="step">
+    <div class="num">3</div>
+    <div class="step-body">
+      <h3>유튜브 주소를 붙여넣고 버튼 한 번</h3>
+      <p>유튜브 영상 주소를 복사해서 <b>입력칸에 붙여넣고</b>, <b>“추출”</b> 버튼을 눌러요. 잠깐 기다리면(자막 내려받기 · 챕터 나누기) 아래처럼 결과가 나와요.</p>
+
+      <div class="shot" role="img" aria-label="labyscribe 추출 후 화면 — 복사 버튼들과 파트 목록">
+        <div class="bar"><i></i><i></i><i></i><span class="addr">127.0.0.1:8760</span></div>
+        <div class="app">
+          <p class="wm">labyscribe</p>
+          <p class="wmsub">유튜브 자막을 챕터별 Markdown 으로 추출 → 챗봇에 붙여넣어 요약</p>
+          <div class="inrow">
+            <div class="inbox" style="color:#e6e9ef;font-family:var(--font-mono)">https://youtu.be/dQw4w9WgXcQ</div>
+            <button class="btn" type="button" tabindex="-1">추출</button>
+          </div>
+          <div class="tools">
+            <button class="ghost hot" type="button" tabindex="-1"><span class="badge">1</span>요약 프롬프트 복사</button>
+            <button class="ghost hot" type="button" tabindex="-1"><span class="badge">2</span>전체 복사</button>
+            <button class="ghost" type="button" tabindex="-1">저장 폴더 선택</button>
+            <button class="ghost dis" type="button" tabindex="-1">이 폴더에 저장</button>
+          </div>
+          <p class="vtitle">알기 쉬운 경제 이야기 — 금리란 무엇인가</p>
+          <ul class="parts">
+            <li><div class="pmeta"><div class="pno">파트 1 / 3</div><div class="pch">도입 · 금리의 정의</div></div><span class="pkb">38 KB</span><button class="pcopy" type="button" tabindex="-1">복사</button></li>
+            <li><div class="pmeta"><div class="pno">파트 2 / 3</div><div class="pch">중앙은행과 기준금리</div></div><span class="pkb">41 KB</span><button class="pcopy" type="button" tabindex="-1">복사</button></li>
+            <li><div class="pmeta"><div class="pno">파트 3 / 3</div><div class="pch">우리 생활에 미치는 영향</div></div><span class="pkb">27 KB</span><button class="pcopy" type="button" tabindex="-1">복사</button></li>
+          </ul>
+        </div>
+      </div>
+      <p class="shot-cap">▲ 추출이 끝난 화면. 노란 <b>①②</b> 표시가 다음 단계에서 누를 버튼이에요.</p>
+    </div>
+  </div>
+
+  <p class="sec-label">STEP 4 · AI 챗봇에 붙여넣어 요약받기 (제일 중요!)</p>
+  <div class="step">
+    <div class="num">4</div>
+    <div class="step-body">
+      <h3>순서대로 두 번만 붙여넣으면 끝</h3>
+      <p><b>①</b> 화면의 <b>“요약 프롬프트 복사”</b>를 눌러요 → ChatGPT나 Claude 채팅창에 <b>붙여넣어요.</b> (아직 안 보내도 돼요.)</p>
+      <p><b>②</b> 이어서 <b>“전체 복사”</b>를 눌러요 → <b>같은 채팅에 이어 붙여넣고 전송</b>해요.</p>
+      <p>그러면 AI가 영상 내용을 <b>핵심 요약 + 10분 구간별 상세 + 주요 용어</b> 형태로 정리해 줘요.</p>
+
+      <div class="note tip">
+        <span class="lbl">팁 · 영상이 길어서 “파트”가 여러 개면</span>
+        <p>아주 긴 영상은 자막이 파트 1·2·3…으로 나뉘어요. “전체 복사”가 한 번에 안 될 만큼 길면, 각 줄의 <b>“복사”</b> 버튼으로 <b>파트 1 → 2 → 3 순서대로</b> 채팅에 이어 붙여넣으면 돼요. 순서만 지키면 됩니다.</p>
+      </div>
+    </div>
+  </div>
+
+  <p class="sec-label">STEP 5 · (선택) 파일로 저장하기</p>
+  <div class="step">
+    <div class="num">5</div>
+    <div class="step-body">
+      <h3>안 해도 돼요 — 나중에 다시 보고 싶을 때만</h3>
+      <p><b>“저장 폴더 선택”</b>으로 폴더를 고르고 <b>“이 폴더에 저장”</b>을 누르면, 뽑은 글이 그 폴더에 파일로 저장돼요. 복사해서 바로 쓰는 걸로 충분하니, 필요할 때만 쓰세요.</p>
+      <div class="note info">
+        <span class="lbl">끄는 법</span>
+        <p>다 썼으면 <b>검은 창(터미널·콘솔)을 닫으면</b> 꺼져요. MAC OS는 그 창에서 <b>Ctrl+C</b>를 눌러도 돼요.</p>
+      </div>
+    </div>
+  </div>
+
+  <p class="sec-label">문제가 생기면</p>
+  <div class="note info">
+    <span class="lbl">브라우저가 안 열려요</span>
+    <p>검은 창에 적힌 <code>http://127.0.0.1:…</code> 주소를 복사해 브라우저에 직접 붙여넣어요.</p>
+  </div>
+  <div class="note info">
+    <span class="lbl">“자막을 찾을 수 없습니다” 같은 메시지가 떠요</span>
+    <p>그 영상에 자막이 없는 경우예요. <b>자막이 있는 다른 영상</b>으로 해 보세요. (자동 생성 자막이라도 있으면 돼요.)</p>
+  </div>
+  <div class="note info">
+    <span class="lbl">MAC OS · “yt-dlp가 없습니다”</span>
+    <p>STEP 1 아래의 <b>yt-dlp 설치</b> 한 줄을 실행한 뒤 다시 열어요.</p>
+  </div>
+
+  <section class="safe">
+    <h2>안심하고 쓰세요</h2>
+    <p><b>내 컴퓨터 안에서만 동작해요.</b> 서버는 <code>127.0.0.1</code>(내 컴퓨터 자신)에만 열려서, 같은 인터넷의 다른 기기나 외부에서 볼 수 없어요.</p>
+    <p><b>자막 추출은 전부 로컬</b>에서 일어나고, <b>요약은 내가 쓰는 AI</b>가 해요. labyscribe가 내 내용을 어딘가로 보내지 않아요.</p>
+    <p>뽑은 원본 자막은 저장 위치(<code>~/labyscribe</code>)에 그대로 남아, 나중에 다시 열어 볼 수 있어요.</p>
+  </section>
+
+  <p class="foot">labyscribe · 유튜브 자막을 뽑아 내 AI로 요약하는 로컬 프로그램<br>
+  <span class="theme-hint">이 문서는 밝은/어두운 테마를 모두 지원해요.</span></p>
+
+</div>
+</body>
+</html>

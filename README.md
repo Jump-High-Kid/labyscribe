@@ -4,6 +4,9 @@
 요약 자체는 당신의 호스트(Claude Desktop 등)가 수행한다 — labyscribe 는 추출·페이징·프롬프트만
 담당하므로 요약 비용이 없다(yt-dlp 자막 직접 추출 · ffmpeg·STT 불필요 · 추출에 LLM 호출 0).
 
+> **처음 쓰시나요?** 컴퓨터를 잘 몰라도 그대로 따라 할 수 있는 **초보자용 사용 설명서**가 있습니다 →
+> **[사용 설명서 웹으로 열기](https://jump-high-kid.github.io/labyscribe/manual.html)** · [문서 파일 보기](docs/manual.html)
+
 ## 설치 (macOS · `.mcpb` 원클릭)
 
 1. `labyscribe.mcpb` 를 연다 → Claude Desktop 이 확장으로 설치한다.
