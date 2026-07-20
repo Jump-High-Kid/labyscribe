@@ -78,12 +78,14 @@ def _resource_dir() -> str:
 def _summary_prompt() -> str:
     # 웹 전용 프롬프트 — v1 MCP 프롬프트(summarize_video.md)와 분리. 웹은 도구 없이
     # 파트를 순서대로 붙여넣는 흐름이라 get_transcript_part 등 MCP 도구를 지시하면 안 됨.
-    try:
-        with open(os.path.join(_resource_dir(), "prompts", "web_summarize.md"),
-                  encoding="utf-8") as f:
-            return f.read()
-    except OSError:
-        return ""                        # 프롬프트 부재는 비치명(추출 자체엔 무관)
+    # 부재/빈 파일 = 배포 결함(번들 누락). "" 반환은 프론트가 빈 프롬프트를 "복사됨 ✓"로
+    # 위장하므로 fail-fast — main() preflight 가 기동 시 검출해 배포 전에 드러낸다(M4).
+    path = os.path.join(_resource_dir(), "prompts", "web_summarize.md")
+    with open(path, encoding="utf-8") as f:   # 부재 = FileNotFoundError 전파(삼키지 않음)
+        text = f.read()
+    if not text.strip():
+        raise RuntimeError("웹 요약 프롬프트가 비어 있습니다: %s" % path)
+    return text
 
 
 class AppState:
@@ -443,6 +445,7 @@ def _gui_loop(state: AppState):
 
 
 def main(argv=None):
+    _summary_prompt()                    # preflight — 프롬프트 번들 누락/빈파일이면 기동 실패(M4)
     output_root = _resolve_output_dir()
     storage.cleanup_stale_temp(output_root, _STALE_TEMP_MAX_AGE_SEC)   # 라이브 temp age-based 보존
     httpd, _nonce = _bind_with_fallback(output_root)

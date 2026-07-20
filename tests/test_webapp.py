@@ -334,6 +334,37 @@ def test_web_prompt_omits_mcp_tool_references():
         assert tok not in prompt                     # 웹에 없는 도구 미지시
 
 
+def test_summary_prompt_missing_file_raises(tmp_path, monkeypatch):
+    """프롬프트 파일 부재(번들 누락)를 "" 로 삼키면 프론트가 빈 프롬프트를
+    '복사됨 ✓' 로 위장한다(M4). 부재는 배포 결함이므로 fail-fast(raise)."""
+    monkeypatch.setattr(webapp, "_resource_dir", lambda: str(tmp_path))  # prompts/ 없음
+    webapp._summary_prompt.cache_clear()
+    try:
+        with pytest.raises(OSError):                 # FileNotFoundError ⊂ OSError
+            webapp._summary_prompt()
+    finally:
+        webapp._summary_prompt.cache_clear()         # 후속 테스트 오염 방지
+
+
+def test_main_preflight_rejects_missing_prompt(tmp_path, monkeypatch):
+    """main() 은 서버 bind 전에 프롬프트 존재를 preflight — 번들 누락이면
+    기동조차 안 함(패키징 스모크가 서버 기동만으로 RED)."""
+    monkeypatch.setenv("OUTPUT_DIR", str(tmp_path / "out"))
+    monkeypatch.setattr(webapp, "_resource_dir", lambda: str(tmp_path))  # prompts/ 없음
+    webapp._summary_prompt.cache_clear()
+    reached = {"bind": False}
+    def _fake_bind(root):
+        reached["bind"] = True
+        raise SystemExit(0)                          # 도달 시 즉시 탈출(hang 방지)
+    monkeypatch.setattr(webapp, "_bind_with_fallback", _fake_bind)
+    try:
+        with pytest.raises(OSError):                 # preflight 가 bind 전에 잡아야
+            webapp.main([])
+        assert not reached["bind"], "preflight 없이 bind 도달 — 프롬프트 부재 미검출"
+    finally:
+        webapp._summary_prompt.cache_clear()
+
+
 def test_v1_mcp_prompt_file_unchanged():
     """웹 분리는 v1 MCP 프롬프트(summarize_video.md)를 건드리지 않는다."""
     root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
