@@ -91,15 +91,19 @@ def run_capped(argv, *, timeout, want_stdout, stdout_cap, stderr_cap
             stdout_f.close()
 
 
-def make_temp(root: str) -> str:
+def make_temp(root: str, *, chmod_root: bool = True) -> str:
     """`<root>/.tmp/<token_hex(8)>/`(0700) + raw/(0700) 생성. 절대경로 반환.
 
     root·.tmp 도 0700 보장(makedirs mode 는 umask 종속이라 명시 chmod). temp 는
     `<root>/.tmp/` 하위 = root 와 동일 fs → atomic rename 시 cross-fs(EXDEV) 회피.
+
+    chmod_root=False → root 자체는 chmod 하지 않음(사용자가 고른 외부 저장폴더 등
+    앱 비소유 경로의 권한을 강제 축소하지 않기 위함 · webapp 저장경로 전용).
     """
     root = os.path.abspath(root)
     os.makedirs(root, exist_ok=True)
-    os.chmod(root, 0o700)
+    if chmod_root:
+        os.chmod(root, 0o700)
     tmp_parent = os.path.join(root, ".tmp")
     os.makedirs(tmp_parent, exist_ok=True)
     os.chmod(tmp_parent, 0o700)
@@ -154,15 +158,17 @@ def fsync_dir(path: str) -> None:
         os.close(fd)
 
 
-def atomic_publish(temp: str, final: str, root: str) -> bool:
+def atomic_publish(temp: str, final: str, root: str, *, chmod_parent: bool = True) -> bool:
     """temp 디렉토리를 final 로 원자 발행. True=발행 · False=이미존재(경쟁패자 idempotent).
 
     순서(load-bearing · codex CRITICAL 반영):
     ① containment 먼저(생성/chmod 전) — 기존 성분 realpath ⊂ root 검증(외부 symlink 차단)
-    ② parent 생성 → 재검증(TOCTOU belt) → chmod 0700
+    ② parent 생성 → 재검증(TOCTOU belt) → chmod 0700(chmod_parent=True 일 때만)
     ③ 파일데이터는 write 시점 fsync 완료 → dir 엔트리 fsync
-    ④ os.rename(원자 스왑) — EEXIST/ENOTEMPTY 는 경쟁패자(False), 그 외 전파(EXDEV/perm)
+    ④ os.rename(원자 스왑) — EEXIST/ENOTEMPTY 는 경쟁패자(False), ENOTDIR+final 존재는 동명
+       파일 충돌(False → 접미 재시도), 그 외 전파(EXDEV/perm·상위성분 TOCTOU 는 오인 없이 raise).
     ⑤ parent + root fsync(신규 video_id 엔트리는 root 에)
+    chmod_parent=False → parent 를 chmod 하지 않음(사용자 지정 외부 저장폴더 권한 보존).
     containment/symlink/EXDEV → OSError(호출자가 OUTPUT_WRITE_FAILED 로).
     """
     root_real = os.path.realpath(root)
@@ -179,7 +185,8 @@ def atomic_publish(temp: str, final: str, root: str) -> bool:
     os.makedirs(parent, exist_ok=True)
     if not is_within(os.path.realpath(parent), root_real):
         raise OSError("containment 위반(생성 후): %r 이 %r 밖" % (parent, root))
-    os.chmod(parent, 0o700)
+    if chmod_parent:
+        os.chmod(parent, 0o700)
 
     # ③ dir 엔트리 fsync (파일데이터는 이미 fsync 완료)
     raw = os.path.join(temp, "raw")
@@ -192,8 +199,10 @@ def atomic_publish(temp: str, final: str, root: str) -> bool:
         os.rename(temp, final)
     except OSError as e:
         if e.errno in (errno.EEXIST, errno.ENOTEMPTY):
-            return False                            # 경쟁패자 → 호출자 재조회
-        raise                                       # EXDEV/perm → OUTPUT_WRITE_FAILED
+            return False                            # 경쟁패자(이미 발행) → 호출자 재조회
+        if e.errno == errno.ENOTDIR and os.path.exists(final):
+            return False                            # final 자리 동명 '파일' 확정 → 접미 재시도
+        raise                                       # 상위성분 TOCTOU·EXDEV/perm → OUTPUT_WRITE_FAILED
 
     # ⑤ parent + root fsync
     fsync_dir(parent)

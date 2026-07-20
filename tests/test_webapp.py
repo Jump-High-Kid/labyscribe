@@ -9,6 +9,7 @@ import os
 import queue
 import re
 import socket
+import stat
 import subprocess
 import sys
 import threading
@@ -190,6 +191,47 @@ def test_save_to_capability_suffix(tmp_path):
     assert "transcript.md" in n1 and "parts" in n1
     # 절대경로 미노출 — 표시명(basename)만
     assert all(os.sep not in name for name in n2)
+
+
+def test_save_preserves_picked_folder_permissions(tmp_path):
+    """저장이 사용자가 고른 폴더의 Unix 권한을 강제 축소하지 않는다(CRITICAL)."""
+    entry = results.ResultEntry("r", "MyVid", ({"markdown": "body"},), "P", {})
+    cap = str(tmp_path / "shared")
+    os.makedirs(cap)
+    os.chmod(cap, 0o755)
+    webapp._save_to_capability(entry, cap)
+    assert stat.S_IMODE(os.stat(cap).st_mode) == 0o755   # 앱이 임의로 chmod 하지 않음
+
+
+def test_save_retries_past_same_name_plain_file(tmp_path):
+    """저장폴더에 동명 '파일'이 있어도 접미로 재시도해 저장한다(HIGH·ENOTDIR)."""
+    entry = results.ResultEntry("r", "MyVid", ({"markdown": "body"},), "P", {})
+    cap = str(tmp_path / "vault")
+    os.makedirs(cap)
+    open(os.path.join(cap, "MyVid"), "w").close()        # 동명 일반파일(디렉토리 아님)
+    names = webapp._save_to_capability(entry, cap)
+    assert os.path.isdir(os.path.join(cap, "MyVid-2"))   # 파일 건너뛰고 접미로 저장
+    assert "transcript.md" in names
+
+
+def test_api_extract_logs_traceback_on_unexpected(tmp_path, monkeypatch, capfd):
+    """예상외 예외는 서버측 stderr 트레이스로 남긴다(HIGH·silent-failure 0·v1 server.py 정합)."""
+    def boom(url, lang, root, emit_markdown=False):
+        raise RuntimeError("boom-xyz-marker")
+    monkeypatch.setattr(webapp._extract, "run_extract", boom)
+    httpd, nonce = webapp.build_server(str(tmp_path / "out"), 0)
+    port = httpd.server_address[1]
+    t = threading.Thread(target=httpd.serve_forever, daemon=True)
+    t.start()
+    try:
+        st, body, _ = _req(port, "POST", "/api/extract", nonce=nonce,
+                           origin=_origin(port), body={"url": "https://youtu.be/x"})
+    finally:
+        httpd.shutdown()
+        httpd.server_close()
+    assert st == 500 and body["error"]["code"] == "UNKNOWN_FAILURE"
+    err = capfd.readouterr().err
+    assert "boom-xyz-marker" in err and "Traceback" in err   # 진단 트레이스 보존
 
 
 # ── 프로토콜 레벨 에러 응답도 보안헤더(reviewer P2 재작업) ─────

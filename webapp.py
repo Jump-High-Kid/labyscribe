@@ -20,6 +20,7 @@ import queue
 import secrets
 import sys
 import threading
+import traceback
 import webbrowser
 from functools import lru_cache
 from typing import Optional
@@ -251,9 +252,11 @@ class Handler(http.server.BaseHTTPRequestHandler):
                 result = _extract.run_extract(url, lang, self._state.output_root,
                                               emit_markdown=True)
         except OSError:
+            traceback.print_exc(file=sys.stderr)   # 진단 트레이스 보존(client 응답은 generic)
             self._send_json(500, _err("OUTPUT_WRITE_FAILED", "출력 저장 중 오류."))
             return
         except Exception:                # 미분류만 UNKNOWN(정보 누출 없이)
+            traceback.print_exc(file=sys.stderr)   # v2 신규코드 버그를 stderr 로 노출(silent 0)
             self._send_json(500, _err("UNKNOWN_FAILURE", "예기치 못한 추출 실패."))
             return
         if result.exit_code != EXIT_OK:
@@ -318,6 +321,7 @@ class Handler(http.server.BaseHTTPRequestHandler):
         try:
             saved = _save_to_capability(entry, cap.root)
         except OSError:
+            traceback.print_exc(file=sys.stderr)   # 저장 실패 원인(디스크풀·권한 등) 진단 보존
             self._send_json(500, _err("OUTPUT_WRITE_FAILED", "저장 폴더 쓰기 오류."))
             return
         self._send_json(200, {"saved_names": saved, "status": "ok"})
@@ -360,7 +364,8 @@ def _save_to_capability(entry, cap_root: str) -> list:
     part_mds = tuple(p["markdown"] for p in entry.parts)
     transcript_md = _full_transcript(entry)
 
-    temp = storage.make_temp(cap_root)
+    # 사용자가 tkinter 로 고른 외부 폴더 = 앱 비소유 → chmod 금지(권한 강제 축소 방지·CRITICAL).
+    temp = storage.make_temp(cap_root, chmod_root=False)
     try:
         raw_dir = os.path.join(temp, "raw")
         if os.path.isdir(raw_dir):
@@ -369,7 +374,7 @@ def _save_to_capability(entry, cap_root: str) -> list:
         for n in range(1, 100):          # 접미 번호(단일 규칙·비덮어쓰기)
             name = safe if n == 1 else "%s-%d" % (safe, n)
             final = os.path.join(cap_root, name)
-            if storage.atomic_publish(temp, final, cap_root):
+            if storage.atomic_publish(temp, final, cap_root, chmod_parent=False):
                 return sorted(os.listdir(final))   # 표시명만(절대경로 미노출)
         raise OSError("저장 대상 이름 충돌 100회 — 정리 후 재시도")
     finally:

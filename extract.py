@@ -484,8 +484,10 @@ _MARKER_LINE_RE = re.compile(r"^\[\d\d:\d\d:\d\d\]$")   # 10분 마커 줄(폴�
 
 
 def _cues_from_cached(cached_dir, c_meta, c_transcript):
-    """v1 캐시 증분용 cue 확보 — raw vtt 재파싱(무네트워크). 손상 시 transcript 폴백.
+    """v1 캐시 증분용 cue 확보 — raw vtt 재파싱(무네트워크). 부재·손상 시 transcript 폴백.
 
+    폴백 조건 = raw 파일 부재(OSError) OR 열렸으나 파싱 cue 0개(잘림·손상). 후자를 폴백하지
+    않으면 빈 cues → `chapters.split` 이 빈 파트를 내고 webapp 이 '파트 0개 성공'으로 위장한다.
     폴백 시 이미 렌더된 transcript 의 10분 마커 줄(`[HH:MM:SS]`)은 **가짜 cue 로 재유입되면
     이중 마커·본문 오염**되므로 제외(정상 경로는 raw 재파싱이라 무관).
     """
@@ -494,9 +496,13 @@ def _cues_from_cached(cached_dir, c_meta, c_transcript):
         try:
             with open(os.path.join(cached_dir, raw_rel), encoding="utf-8",
                       errors="replace") as f:
-                return _dedup_rolling(_parse_vtt_cues(f.read()))
-        except OSError:
-            pass
+                cues = _dedup_rolling(_parse_vtt_cues(f.read()))
+            if cues:
+                return cues                  # 정상 재파싱(챕터 경계 분할 가능)
+            # 열렸으나 cue 0 → 폴백(빈 파트 '성공' 차단)
+        except OSError as e:
+            print("경고: 캐시 raw vtt 재파싱 실패(%s: %s) — transcript 폴백"
+                  % (raw_rel, e), file=sys.stderr)
     return [(0.0, line) for line in c_transcript.splitlines()
             if line.strip() and not _MARKER_LINE_RE.match(line.strip())]
 

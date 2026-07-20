@@ -163,3 +163,12 @@ def test_cues_from_cached_excludes_marker_lines():
     texts = [t for _, t in cues]
     assert "[00:10:00]" not in texts and "[00:20:00]" not in texts
     assert "real line" in texts and "another" in texts
+
+
+def test_cues_from_cached_falls_back_on_empty_parse(tmp_path):
+    """열리지만 cue 0 개인 raw vtt 는 transcript 폴백(빈 파트 '성공' 차단·HIGH)."""
+    (tmp_path / "raw").mkdir()
+    (tmp_path / "raw" / "x.en.vtt").write_text("GARBAGE not a vtt\nno cues here\n")
+    cues = E._cues_from_cached(str(tmp_path), {"raw_vtt": "raw/x.en.vtt"},
+                               "실제 transcript 본문\n둘째 줄")
+    assert len(cues) > 0   # 빈 파싱도 transcript 폴백으로 본문 보존(빈 파트 차단)
