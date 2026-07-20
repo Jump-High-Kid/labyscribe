@@ -62,7 +62,9 @@ def _split_oversized_atom(atom: str, limit_bytes: int):
 
 def _split_big_section(atoms, limit_bytes: int):
     """상한 초과 섹션을 줄 경계로 그리디 분할. 단일 줄 초과 시 문자 재분할."""
-    parts, cur, cur_b = [], [], 0
+    parts: list = []
+    cur: list = []
+    cur_b = 0
     for atom in atoms:
         pieces = ([atom] if _nbytes(atom) <= limit_bytes
                   else _split_oversized_atom(atom, limit_bytes))
@@ -84,7 +86,9 @@ def split_transcript(transcript: str, limit_bytes: int = PART_LIMIT_BYTES):
         return [transcript]
 
     atoms = transcript.splitlines(keepends=True)   # 개행 포함 → concat 무손실
-    parts, cur, cur_b = [], [], 0
+    parts: list = []
+    cur: list = []
+    cur_b = 0
     for sec in _sections(atoms):
         sec_str = "".join(sec)
         sec_b = _nbytes(sec_str)

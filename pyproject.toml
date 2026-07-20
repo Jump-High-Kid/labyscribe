@@ -8,7 +8,7 @@ license = { text = "MIT" }
 dependencies = ["mcp>=1.28"]
 
 [project.optional-dependencies]
-dev = ["pytest"]
+dev = ["pytest", "pytest-cov", "ruff", "mypy"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
@@ -17,3 +17,26 @@ markers = [
   "online: 실 네트워크 필요(기본 제외·LABYSCRIBE_ONLINE=1 로 활성)",
   "smoke: 실영상 통합 스모크",
 ]
+
+# ── 정적분석·커버리지 게이트 (CI 하드게이트 · black 미채택=기존 %-포맷 스타일 보존) ──
+[tool.ruff]
+target-version = "py310"
+# lint 기본룰(E4·E7·E9·F) 사용 — E501(라인 길이)은 미선택(black 미채택·기존 장문 라인 보존).
+# 커버리지·타입은 pytest-cov·mypy 분담. (line-length 는 미설정 — 강제 게이트 없음을 명시)
+
+[tool.ruff.lint.per-file-ignores]
+# 테스트 람다 관례 `lambda u, l, o:`(u=url·l=lang·o=out — run_extract 3-인자 대응).
+# 소스는 E741 강제(모호변수 금지), 테스트의 이 확립된 관례만 예외. 다른 규칙은 tests 도 적용.
+"tests/*" = ["E741"]
+
+[tool.mypy]
+python_version = "3.10"
+ignore_missing_imports = true     # mcp SDK 등 서드파티 stub 부재 허용(lenient)
+# source 모듈만 — tests/·build/·dist/ 제외(회귀 게이트는 source 계약에).
+files = [
+  "extract.py", "server.py", "webapp.py", "storage.py", "chapters.py",
+  "paging.py", "handles.py", "results.py", "render_md.py",
+]
+
+[tool.coverage.run]
+omit = ["tests/*", "build/*", "dist/*", ".venv/*"]

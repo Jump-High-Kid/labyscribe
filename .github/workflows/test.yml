@@ -29,6 +29,14 @@ jobs:
       - name: install dev extras
         run: pip install -e ".[dev]"
 
+      # 정적분석 하드게이트 — lint(ruff·전체 repo) + type(mypy·source 모듈만·lenient).
+      - name: ruff (lint 게이트)
+        run: ruff check .
+
+      - name: mypy (type 게이트)
+        run: mypy
+
       # env 미설정 → online 자동 제외(결정적 테스트만). CK-1 게이트 재사용.
-      - name: pytest
-        run: pytest
+      # coverage 하드게이트 80%(현 91%) — dist/build/tests 는 omit(pyproject).
+      - name: pytest (+coverage 게이트)
+        run: pytest --cov=. --cov-report=term-missing --cov-fail-under=80

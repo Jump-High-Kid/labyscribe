@@ -1,0 +1,76 @@
+name: smoke
+
+# yt-dlp online 스모크 (cron · 비차단 판정) — 하드닝 run.
+# 목적: labyscribe 의 유일 런타임 의존(yt-dlp)이 YouTube 변경으로 깨지는지 조기경보.
+#
+# adr-test-two-layer-gate 와의 관계(중요): 결정적 test.yml(회귀 차단)·pytest online 스모크
+# (post-run_extract exit≠0 = fail·회귀 은폐 금지)은 **무변경**. 이 워크플로는 그 게이트를
+# 약화하지 않는 **별개 모니터링 층**이다 — CLI(extract.py) exit code 를 아래처럼 분류한다:
+#   0            → OK
+#   3·4          → inconclusive(neutral) — DOWNLOAD_FAILED/VIDEO_UNAVAILABLE.
+#                  YouTube 데이터센터 IP 봇차단이 이 exit 로 나타나므로 false-alarm 억제(warning 만).
+#   그 외 nonzero → RED — 크래시·NO_SUBTITLE(2)·EMPTY_TRANSCRIPT(6)·BAD_INPUT(5)·상한(7·8) 등
+#                  진짜 회귀(select_track·parse_vtt·download argv 등). 잡 실패.
+# pytest online 은 여전히 strict(post-run_extract 전부 fail) — 로컬/수동 실행 계약 불변.
+
+on:
+  schedule:
+    - cron: "17 6 * * 1"   # 매주 월 06:17 UTC(정시 러너 혼잡 회피 오프셋)
+  workflow_dispatch:
+
+# GITHUB_TOKEN 최소권한(test.yml·build.yml 정책 동일).
+permissions:
+  contents: read
+
+jobs:
+  smoke:
+    runs-on: ubuntu-latest
+    steps:
+      # actions 는 commit SHA 로 고정(provenance 정책·test.yml·build.yml 과 동일 SHA).
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0  # v7.0.0
+
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1  # v6.3.0
+        with:
+          python-version: '3.12'
+
+      - name: install package + yt-dlp
+        run: |
+          pip install -e .
+          pip install -U yt-dlp
+
+      - name: online smoke (똑똑한 판정 · CLI exit code 분류)
+        run: |
+          set -u
+          # 대표 영상 — 삭제위험 극저(2005 최초 업로드·3Blue1Brown). 무챕터/챕터 각 1.
+          urls=(
+            "https://www.youtube.com/watch?v=jNQXAC9IVRw"   # Me at the zoo(en 자막·무챕터)
+            "https://www.youtube.com/watch?v=aircAruvnKk"   # 3Blue1Brown(챕터 有)
+          )
+          red=0
+          inconclusive=0
+          for u in "${urls[@]}"; do
+            out="$(mktemp -d)"
+            set +e
+            python extract.py "$u" --out "$out"
+            ec=$?
+            set -e
+            rm -rf "$out"
+            case "$ec" in
+              0)
+                echo "OK            exit=0  $u" ;;
+              3|4)
+                echo "::warning::INCONCLUSIVE exit=$ec (DOWNLOAD_FAILED/UNAVAILABLE — YouTube-side, likely CI IP block): $u"
+                inconclusive=$((inconclusive + 1)) ;;
+              *)
+                echo "::error::REGRESSION exit=$ec (crash/NO_SUBTITLE/EMPTY 등 진짜 회귀): $u"
+                red=$((red + 1)) ;;
+            esac
+          done
+          echo "요약: RED=$red · inconclusive=$inconclusive / 총 ${#urls[@]}"
+          if [ "$red" -gt 0 ]; then
+            echo "yt-dlp/추출 회귀 감지 — 잡 실패로 표시(조기경보)."
+            exit 1
+          fi
+          if [ "$inconclusive" -gt 0 ]; then
+            echo "inconclusive 만 발생(YouTube-side·회귀 아님) — neutral 통과."
+          fi

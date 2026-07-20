@@ -501,8 +501,10 @@ def test_ytdlp_bin_frozen_sibling(monkeypatch, tmp_path):
 def test_ytdlp_bin_frozen_meipass(monkeypatch, tmp_path):
     # 브랜치②: 실행파일 dir 엔 없고 _MEIPASS 에 있음(onefile)
     monkeypatch.delenv("YTDLP_PATH", raising=False)
-    exedir = tmp_path / "bin"; exedir.mkdir()
-    meipass = tmp_path / "mei"; meipass.mkdir()
+    exedir = tmp_path / "bin"
+    exedir.mkdir()
+    meipass = tmp_path / "mei"
+    meipass.mkdir()
     (meipass / "yt-dlp").write_text("x")
     monkeypatch.setattr(E.sys, "frozen", True, raising=False)
     monkeypatch.setattr(E.sys, "executable", str(exedir / "labyscribe"))
