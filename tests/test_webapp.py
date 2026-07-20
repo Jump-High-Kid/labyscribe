@@ -8,6 +8,7 @@ import json
 import os
 import queue
 import re
+import shutil
 import socket
 import stat
 import subprocess
@@ -331,6 +332,76 @@ def test_selfcheck_real_tkinter_probe(monkeypatch):
         assert webapp.main(["--selfcheck"]) == 0     # 실 프로브 통과
     finally:
         webapp._summary_prompt.cache_clear()
+
+
+# ── macOS 소스 런처: labyscribe-web.command preflight 회귀 (CK-1·CK-2·CK-6·CK-7) ──
+#
+# 런처는 mac용 `.command` 이지만 preflight 는 순수 bash 라 ubuntu CI 에서도 게이트가 된다.
+# 실서버는 기동하지 않고(happy path 는 test_python_webapp_py_launches_server 가 커버) preflight
+# 실패 분기만 검증 — 통제 PATH 로 python3/yt-dlp 부재를 결정론적으로 모의(test-entrypoint-launch-guard).
+
+_LAUNCHER = os.path.join(
+    os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "labyscribe-web.command")
+
+
+def _bindir(tmp_path, *, python3):
+    """통제 PATH bin — 런처가 쓰는 유일 외부 coreutils(dirname)만 공통. yt-dlp 는 항상 부재.
+    python3=True 면 실 인터프리터 심링크(버전 통과), False 면 부재(첫 게이트 실패)."""
+    bindir = tmp_path / "bin"
+    bindir.mkdir()
+    dn = shutil.which("dirname")
+    assert dn, "dirname 미존재 — 테스트 환경 이상"
+    os.symlink(dn, bindir / "dirname")
+    if python3:
+        os.symlink(sys.executable, bindir / "python3")
+    return bindir
+
+
+def _run_launcher(bindir):
+    bash = shutil.which("bash")
+    if not bash:
+        pytest.skip("bash 미존재 — 런처는 mac/linux 셸 전용")
+    return subprocess.run(
+        [bash, _LAUNCHER],
+        env={"PATH": str(bindir), "HOME": os.environ.get("HOME", "/tmp")},
+        capture_output=True, text=True, timeout=15)
+
+
+def test_launcher_exists_and_executable():
+    """AC-1: 런처가 repo 루트에 있고 실행권한(0755)."""
+    assert os.path.isfile(_LAUNCHER), "labyscribe-web.command 부재"
+    assert os.access(_LAUNCHER, os.X_OK), "labyscribe-web.command 실행권한 없음"
+
+
+def test_launcher_fails_without_ytdlp(tmp_path):
+    """CK-2: yt-dlp 부재 → 비0 종료 + 설치 안내(서버 미기동)."""
+    r = _run_launcher(_bindir(tmp_path, python3=True))
+    assert r.returncode != 0, "yt-dlp 부재인데 성공/기동(silent-failure)"
+    out = r.stdout + r.stderr
+    assert "yt-dlp" in out and "설치" in out, "yt-dlp 설치 안내 부재: %r" % out
+
+
+def test_launcher_fails_without_python(tmp_path):
+    """CK-1: python3 부재 → 비0 종료 + 설치 안내(서버 미기동)."""
+    r = _run_launcher(_bindir(tmp_path, python3=False))
+    assert r.returncode != 0, "python3 부재인데 성공/기동(silent-failure)"
+    out = r.stdout + r.stderr
+    assert "python3" in out and "설치" in out, "python3 설치 안내 부재: %r" % out
+
+
+def test_launcher_rejects_old_python(tmp_path):
+    """CK-6: Python <3.10 → 비0 + 버전 안내. 실인터프리터 질의(`-c` 종료코드)로 판정."""
+    bindir = tmp_path / "bin"
+    bindir.mkdir()
+    os.symlink(shutil.which("dirname"), bindir / "dirname")
+    stub = bindir / "python3"
+    # `-c <식>` → exit 1(구버전 모의) · `-V` → 버전 문자열. 문자열 파싱이 아닌 종료코드 분기 검증.
+    stub.write_text('#!/bin/sh\nif [ "$1" = "-c" ]; then exit 1; fi\necho "Python 3.9.0"\n')
+    stub.chmod(0o755)
+    r = _run_launcher(bindir)
+    assert r.returncode != 0, "구버전 Python 인데 통과(silent-failure)"
+    out = r.stdout + r.stderr
+    assert "3.10" in out, "버전 하한 안내 부재: %r" % out
 
 
 def test_main_opens_browser_at_server_url(monkeypatch):

@@ -46,8 +46,30 @@ Claude Desktop 없이 **브라우저에서 바로** 쓰는 로컬 웹 UI다. 추
 - **네트워크 노출 0**: 서버는 `127.0.0.1` 에만 바인딩된다(LAN·인터넷 미노출).
 - 저장 위치 기본 `%USERPROFILE%\labyscribe`(환경변수 `OUTPUT_DIR` 로 변경).
 
-> **macOS 는 이번 릴리스 범위 밖** — 미서명 실행파일은 Gatekeeper 가 더블클릭을 막는다.
-> macOS 는 [CLI](#cli-개발자용)/소스 실행(`python webapp.py`)으로 쓰거나 다음 릴리스를 기다린다.
+## 웹 UI (v2 · macOS 소스 실행)
+
+macOS 는 **소스에서 바로** 실행한다. 미서명 실행파일은 Gatekeeper 가 더블클릭을 막으므로
+(서명·공증은 Apple Developer 계정이 필요) 이번 릴리스는 **소스 실행을 1순위**로 지원한다.
+런타임 의존성은 **yt-dlp 하나**뿐이라 별도 패키지 설치가 없다.
+
+**요구**: Python ≥ 3.10 · yt-dlp on PATH.
+
+1. 이 저장소를 받는다(`git clone` 또는 ZIP 다운로드 후 압축해제).
+2. **`labyscribe-web.command`** 을 더블클릭한다 → Terminal 이 열리고 로컬 웹서버가 뜬 뒤
+   기본 브라우저가 `http://127.0.0.1:8760/` 을 연다(포트 점유 시 자동으로 다음 포트 탐색).
+   - 런처가 Python·yt-dlp 존재를 먼저 확인하고, **없으면 설치법을 안내하며 멈춘다**(자동 설치는 안 함).
+   - 종료는 그 Terminal 창에서 **Ctrl+C**.
+3. 터미널에서 직접 실행해도 된다: `python3 webapp.py`.
+
+**의존성 설치**(런처가 안내하면):
+- **Python 3.10+**: [python.org](https://www.python.org/downloads/) 또는 `brew install python`
+- **yt-dlp**: `brew install yt-dlp` 또는 `python3 -m pip install -U yt-dlp`
+  (소스 실행은 yt-dlp 를 사용자 환경에서 받으므로 **공식 배포처**로 설치한다.)
+- (선택) **폴더 선택 대화상자**: Homebrew Python 은 `brew install python-tk` 가 필요하다.
+  없어도 동작한다(대화상자만 비활성 · 저장 위치는 아래 참조).
+
+- **네트워크 노출 0**: 서버는 `127.0.0.1` 에만 바인딩된다(LAN·인터넷 미노출).
+- 저장 위치 기본 `~/labyscribe`(환경변수 `OUTPUT_DIR` 로 변경).
 
 ## 지원 호스트 / 플랜
 
