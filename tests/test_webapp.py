@@ -558,3 +558,9 @@ def test_pick_folder_empty_error_message_still_error(server, monkeypatch):
                             origin=_origin(port), body={})
     assert status == 500
     assert data["error"]["code"] == "FOLDER_DIALOG_FAILED"
+
+
+def test_log_hint_absent_when_logging_failed():
+    """log_error 실패(None) → 안내 접미 없이 generic 메시지 유지(dangling 'error.log' 0)."""
+    assert webapp._log_hint(None) == ""
+    assert "error.log" in webapp._log_hint("error.log")     # 성공 시에만 파일명 안내
