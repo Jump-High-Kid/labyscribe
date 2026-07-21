@@ -14,6 +14,7 @@ import stat
 import subprocess
 import sys
 import threading
+import types
 
 import pytest
 
@@ -515,6 +516,46 @@ def test_v1_mcp_prompt_file_unchanged():
 
 
 # ── ③ tkinter 폴더 대화상자: 실패 ≠ 취소 (침묵실패 차단) ────────────
+
+def test_ask_directory_forces_topmost_and_parent(monkeypatch):
+    """Windows 폴더창이 브라우저 뒤로 숨는 문제 방지 — root topmost 설정 + askdirectory(parent).
+
+    실제 tkinter 를 mock(실창 미표시)해 회귀를 잡는다: topmost 미설정으로 되돌아가면
+    Windows 사용자에겐 '저장 폴더 선택 무반응'으로 재발한다.
+    """
+    calls = {"attributes": [], "askdir_kwargs": None, "destroyed": False}
+
+    class _FakeRoot:
+        def withdraw(self):
+            pass
+
+        def attributes(self, *a):
+            calls["attributes"].append(a)
+
+        def update(self):
+            pass
+
+        def destroy(self):
+            calls["destroyed"] = True
+
+    fake_root = _FakeRoot()
+
+    def _fake_askdir(**kwargs):
+        calls["askdir_kwargs"] = kwargs
+        return "/picked/folder"
+
+    fake_filedialog = types.SimpleNamespace(askdirectory=_fake_askdir)
+    fake_tkinter = types.SimpleNamespace(Tk=lambda: fake_root, filedialog=fake_filedialog)
+    monkeypatch.setitem(sys.modules, "tkinter", fake_tkinter)
+    monkeypatch.setitem(sys.modules, "tkinter.filedialog", fake_filedialog)
+
+    result = webapp._ask_directory()
+
+    assert result == "/picked/folder"
+    assert ("-topmost", True) in calls["attributes"]              # 전면화 설정
+    assert calls["askdir_kwargs"].get("parent") is fake_root      # parent 전달(topmost 상속)
+    assert calls["destroyed"]                                     # finally 정리 보장
+
 
 def _run_gui(state):
     threading.Thread(target=webapp._gui_loop, args=(state,), daemon=True).start()

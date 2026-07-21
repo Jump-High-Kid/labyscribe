@@ -418,6 +418,9 @@ def _ask_directory() -> Optional[str]:
 
     tkinter 부재/대화상자 실패는 **raise**(호출측 `_gui_loop` 이 holder['error']로 포착) —
     '사용자 취소'(빈 경로→None)와 혼동해 침묵실패로 위장하지 않기 위함. 취소만 None.
+
+    Windows 에서 대화상자가 브라우저 창 **뒤에 숨는** 고질병 → 부모 root 를 topmost 로
+    올리고 `parent=root` 로 상속시켜 전면 표시(topmost 미설정 시 사용자에겐 '무반응'처럼 보임).
     """
     try:
         import tkinter
@@ -427,7 +430,9 @@ def _ask_directory() -> Optional[str]:
     root = tkinter.Tk()
     try:                                 # withdraw 포함 전체를 감싸 예외 시에도 destroy 보장
         root.withdraw()
-        path = filedialog.askdirectory()
+        root.attributes("-topmost", True)   # 대화상자를 최상위로(브라우저 뒤 숨김 방지·Windows)
+        root.update()                        # topmost 속성을 대화상자 뜨기 전에 반영
+        path = filedialog.askdirectory(parent=root)   # parent 지정 → topmost 상속·전면 표시
     finally:
         root.destroy()
     return path or None
