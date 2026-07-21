@@ -22,7 +22,15 @@ import shutil
 import subprocess
 import tempfile
 import time
+import traceback
 from typing import Optional, Tuple
+
+# O_NOFOLLOW·O_DIRECTORY 는 POSIX 전용 — Windows os 모듈엔 없어 `_O_NOFOLLOW` 참조 자체가
+# AttributeError(≠OSError → 상위 catch-all "예기치 못한 추출 실패"). getattr 폴백(0)으로
+# 크로스플랫폼: Unix 는 symlink 거부/디렉토리 belt 유지, Windows 는 플래그 생략(값 0=OR 무영향).
+# Windows 는 symlink 생성에 권한 필요 + realpath containment 가 별도 존치(층 분리)라 손실 비례적.
+_O_NOFOLLOW = getattr(os, "O_NOFOLLOW", 0)
+_O_DIRECTORY = getattr(os, "O_DIRECTORY", 0)
 
 
 # ── 순수층 (fs 무의존 · raise 금지 · 빈/False 반환) ─────────────────
@@ -118,7 +126,7 @@ def make_temp(root: str, *, chmod_root: bool = True) -> str:
 
 def write_text_synced(path: str, text: str) -> None:
     """O_EXCL|O_NOFOLLOW 로 새 파일(0600) 생성 → write → flush → os.fsync."""
-    fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o600)
+    fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL | _O_NOFOLLOW, 0o600)
     try:
         with os.fdopen(fd, "wb", closefd=False) as f:
             f.write(text.encode("utf-8"))
@@ -128,11 +136,38 @@ def write_text_synced(path: str, text: str) -> None:
         os.close(fd)
 
 
+def log_error(root: str, context: str) -> Optional[str]:
+    """현재 예외 traceback 을 `<root>/error.log` 에 append(best-effort). 반환 = 'error.log'|None.
+
+    필드 진단용 — 에러를 겪는 사용자가 터미널/서버로그 없이도 원인 파일을 개발자에게 전달할
+    수 있게 한다. **반드시 except 블록 안에서 호출**(내부 `traceback.format_exc()`).
+    **절대 raise 안 함**(로깅 실패가 원 에러를 가리면 안 됨) → 실패 시 None. 클라이언트에
+    노출하는 건 파일명("error.log")뿐(절대경로 미노출·AC-1). O_NOFOLLOW·0600 = 하우스 스타일.
+    root 는 사용자 지정 폴더일 수 있어 chmod 하지 않음(권한 축소 금지·make_temp chmod_root=False 정합).
+    무회전 append = disk 총량 하드캡(disk_usage 가 error.log 도 합산)이 전역 backstop — 별도 rotation 미도입(YAGNI).
+    """
+    try:
+        root = os.path.abspath(root)
+        os.makedirs(root, exist_ok=True)
+        entry = "\n===== %s | %s =====\n%s\n" % (
+            time.strftime("%Y-%m-%d %H:%M:%S"), context, traceback.format_exc())
+        fd = os.open(os.path.join(root, "error.log"),
+                     os.O_WRONLY | os.O_CREAT | os.O_APPEND | _O_NOFOLLOW, 0o600)
+        try:
+            os.write(fd, entry.encode("utf-8", "replace"))
+            os.fsync(fd)
+        finally:
+            os.close(fd)
+        return "error.log"
+    except Exception:                          # 진단 로깅은 원 에러를 절대 가리지 않음
+        return None
+
+
 def copy_file_synced(src: str, dst: str) -> None:
     """src → dst 복사. **양쪽 O_NOFOLLOW**(대칭 방어·CK-7) · dst 는 O_CREAT|O_EXCL(0600) + fsync."""
-    src_fd = os.open(src, os.O_RDONLY | os.O_NOFOLLOW)
+    src_fd = os.open(src, os.O_RDONLY | _O_NOFOLLOW)
     try:                                   # dst open 실패해도 src_fd 누수 0(중첩 try)
-        dst_fd = os.open(dst, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o600)
+        dst_fd = os.open(dst, os.O_WRONLY | os.O_CREAT | os.O_EXCL | _O_NOFOLLOW, 0o600)
         try:
             with os.fdopen(src_fd, "rb", closefd=False) as sf, \
                     os.fdopen(dst_fd, "wb", closefd=False) as df:
@@ -148,7 +183,7 @@ def copy_file_synced(src: str, dst: str) -> None:
 def fsync_dir(path: str) -> None:
     """디렉토리 엔트리 fsync — best-effort(일부 fs EINVAL). O_DIRECTORY|O_NOFOLLOW."""
     try:
-        fd = os.open(path, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
+        fd = os.open(path, os.O_RDONLY | _O_DIRECTORY | _O_NOFOLLOW)
     except OSError:
         return
     try:
@@ -254,7 +289,7 @@ def read_published(directory: str) -> Optional[Tuple[str, dict]]:
 
 def _read_file_nofollow(path: str) -> str:
     """O_NOFOLLOW 로 파일 열어 UTF-8 텍스트 반환(마지막 성분 symlink 거부)."""
-    fd = os.open(path, os.O_RDONLY | os.O_NOFOLLOW)
+    fd = os.open(path, os.O_RDONLY | _O_NOFOLLOW)
     try:
         with os.fdopen(fd, "rb", closefd=False) as f:
             return f.read().decode("utf-8", "replace")
@@ -322,7 +357,7 @@ def read_v2_parts(directory: str, meta: dict) -> Optional[tuple]:
     if md_name:
         try:
             os.close(os.open(os.path.join(directory, md_name),
-                             os.O_RDONLY | os.O_NOFOLLOW))
+                             os.O_RDONLY | _O_NOFOLLOW))
         except OSError:
             return None                          # transcript.md 부재(증분 커밋 중) → 미완결
     records = []

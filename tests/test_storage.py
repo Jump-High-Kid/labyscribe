@@ -306,3 +306,64 @@ def test_cleanup_stale_temp_age_based(tmp_path):
 
 def test_cleanup_stale_temp_no_tmp_dir(tmp_path):
     ST.cleanup_stale_temp(str(tmp_path / "missing"), max_age_sec=10)   # 무예외
+
+
+# ── log_error: 필드 진단(traceback → error.log · best-effort · raise 금지) ──
+
+def test_log_error_writes_traceback(tmp_path):
+    root = str(tmp_path / "out")                                # 미존재 루트도 생성
+    try:
+        raise ValueError("boom-marker-42")
+    except ValueError:
+        name = ST.log_error(root, "unit ctx")
+    assert name == "error.log"
+    with open(os.path.join(root, "error.log"), encoding="utf-8") as f:
+        body = f.read()
+    assert "boom-marker-42" in body and "Traceback" in body and "unit ctx" in body
+
+
+def test_log_error_appends(tmp_path):
+    root = str(tmp_path / "out")
+    for _ in range(2):
+        try:
+            raise RuntimeError("dup-marker")
+        except RuntimeError:
+            ST.log_error(root, "ctx")
+    with open(os.path.join(root, "error.log"), encoding="utf-8") as f:
+        assert f.read().count("| ctx =====") == 2              # 엔트리 2개 append(덮어쓰기 아님)
+
+
+def test_log_error_never_raises_on_bad_root(tmp_path):
+    plain = tmp_path / "afile"
+    plain.write_text("x")                                      # 파일을 root 로 → makedirs 실패
+    assert ST.log_error(str(plain / "sub"), "ctx") is None      # 예외 대신 None
+
+
+# ── Windows 크로스플랫폼: O_NOFOLLOW/O_DIRECTORY 부재 시 저장 사이클 크래시 0 ──
+# POSIX 전용 플래그를 os 에서 제거한 인터프리터에서 storage 를 새로 import → 전체 저장
+# 사이클을 돌린다. 코드가 `os.O_NOFOLLOW` 직접참조로 회귀하면 AttributeError 로 exit≠0.
+# (Windows 실기: 이 AttributeE → 상위 catch-all "예기치 못한 추출 실패" 였음)
+
+def test_storage_cycle_without_posix_only_flags(tmp_path):
+    repo_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    script = (
+        "import os\n"
+        "for f in ('O_NOFOLLOW','O_DIRECTORY'):\n"
+        "    if hasattr(os,f): delattr(os,f)\n"
+        "import json, storage\n"
+        "assert storage._O_NOFOLLOW==0 and storage._O_DIRECTORY==0\n"
+        "root=os.path.join(r%r,'root')\n"
+        "src=os.path.join(r%r,'s.txt'); open(src,'w').write('hi')\n"
+        "temp=storage.make_temp(root, chmod_root=False)\n"
+        "storage.copy_file_synced(src, os.path.join(temp,'raw','v.en.vtt'))\n"
+        "storage.write_text_synced(os.path.join(temp,'transcript.txt'),'x')\n"
+        "storage.write_text_synced(os.path.join(temp,'meta.json'), json.dumps({'id':'v'}))\n"
+        "storage.fsync_dir(temp)\n"
+        "final=os.path.join(root,'v',storage.version_dir_name('en','abcdef012345'))\n"
+        "assert storage.atomic_publish(temp, final, root, chmod_parent=False)\n"
+        "assert storage.read_published(final)[0]=='x'\n"
+        % (str(tmp_path), str(tmp_path))
+    )
+    env = {**os.environ, "PYTHONPATH": repo_root}
+    r = subprocess.run([sys.executable, "-c", script], capture_output=True, text=True, env=env)
+    assert r.returncode == 0, "Windows 플래그 부재 시 저장 사이클 실패:\n" + r.stderr

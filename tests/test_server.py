@@ -420,3 +420,9 @@ def test_preflight_source_uses_path_which(monkeypatch):
     assert S._ytdlp_ready() is True
     monkeypatch.setattr(S, "_shutil_which", lambda c: None)
     assert S._ytdlp_ready() is False
+
+
+def test_log_hint_absent_when_logging_failed():
+    """log_error 실패(None) → 안내 접미 없이 generic 메시지 유지(dangling 'error.log' 0)."""
+    assert S._log_hint(None) == ""
+    assert "error.log" in S._log_hint("error.log")          # 성공 시에만 파일명 안내

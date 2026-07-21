@@ -255,11 +255,13 @@ class Handler(http.server.BaseHTTPRequestHandler):
                                               emit_markdown=True)
         except OSError:
             traceback.print_exc(file=sys.stderr)   # 진단 트레이스 보존(client 응답은 generic)
-            self._send_json(500, _err("OUTPUT_WRITE_FAILED", "출력 저장 중 오류."))
+            logged = storage.log_error(self._state.output_root, "webapp extract (OSError)")
+            self._send_json(500, _err("OUTPUT_WRITE_FAILED", "출력 저장 중 오류." + _log_hint(logged)))
             return
         except Exception:                # 미분류만 UNKNOWN(정보 누출 없이)
             traceback.print_exc(file=sys.stderr)   # v2 신규코드 버그를 stderr 로 노출(silent 0)
-            self._send_json(500, _err("UNKNOWN_FAILURE", "예기치 못한 추출 실패."))
+            logged = storage.log_error(self._state.output_root, "webapp extract")
+            self._send_json(500, _err("UNKNOWN_FAILURE", "예기치 못한 추출 실패." + _log_hint(logged)))
             return
         if result.exit_code != EXIT_OK:
             self._send_json(400, _err(_EXIT_TO_CODE.get(result.exit_code,
@@ -350,6 +352,13 @@ class Handler(http.server.BaseHTTPRequestHandler):
 
 def _err(code: str, message: str) -> dict:
     return {"error": {"code": code, "message": message}}
+
+
+def _log_hint(logged: Optional[str]) -> str:
+    """log_error 결과 → 사용자 안내 접미(기록 성공 시에만). 절대경로 미노출·저장폴더 상대."""
+    if not logged:
+        return ""
+    return " 자세한 원인이 저장 폴더의 %s 에 기록되었습니다 — 이 파일을 개발자에게 보내주세요." % logged
 
 
 def _full_transcript(entry) -> str:

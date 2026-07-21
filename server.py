@@ -92,6 +92,13 @@ def _err(code: str, message: str) -> dict:
     return {"error": {"code": code, "message": message}}
 
 
+def _log_hint(logged: Optional[str]) -> str:
+    """log_error 결과 → 사용자 안내 접미(기록 성공 시에만). 절대경로 미노출·저장폴더 상대."""
+    if not logged:
+        return ""
+    return " 자세한 원인이 저장 폴더의 %s 에 기록되었습니다 — 이 파일을 개발자에게 보내주세요." % logged
+
+
 def _validate_input(url: str) -> Optional[dict]:
     """최소 안전 입력 검증(SSRF 는 run_extract.validate_url). 위반 시 error dict."""
     if not isinstance(url, str) or not url:
@@ -149,10 +156,12 @@ def _do_extract(url: str, lang: Optional[str] = None) -> dict:
         result = run_extract(url, lang, _resolve_output_dir())
     except OSError:
         traceback.print_exc(file=sys.stderr)
-        return _err("OUTPUT_WRITE_FAILED", "출력 저장 중 오류가 발생했습니다.")
+        logged = storage.log_error(_resolve_output_dir(), "server extract (OSError)")
+        return _err("OUTPUT_WRITE_FAILED", "출력 저장 중 오류가 발생했습니다." + _log_hint(logged))
     except Exception:                              # 미분류 예외만 UNKNOWN(CK-31)
         traceback.print_exc(file=sys.stderr)
-        return _err("UNKNOWN_DOWNLOAD_FAILURE", "예기치 못한 추출 실패.")
+        logged = storage.log_error(_resolve_output_dir(), "server extract")
+        return _err("UNKNOWN_DOWNLOAD_FAILURE", "예기치 못한 추출 실패." + _log_hint(logged))
     if result.exit_code != EXIT_OK:
         return _map_error(result.exit_code, result.message)
     # 5) 자원 한도: transcript 바이트·파트 수 상한 → 구조화 에러(CK-37)
