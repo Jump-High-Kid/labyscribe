@@ -131,7 +131,8 @@ code{font-family:var(--font-mono);font-size:.86em;background:var(--accent-soft);
   font-family:var(--font-sans);}
 .app .wm{font-size:1.25rem;font-weight:800;letter-spacing:-.02em;margin:0 0 .15rem;}
 .app .wmsub{color:#98a0b3;font-size:.8rem;margin:0 0 1.1rem;}
-.app .inrow{display:flex;gap:.5rem;}
+.app .inrow{display:flex;gap:.5rem;flex-wrap:wrap;}
+.app .done{color:#3fb950;font-size:.85rem;margin:.85rem 0 0;}
 .app .inbox{flex:1;background:#181b22;border:1px solid #262b36;border-radius:9px;
   padding:.6rem .75rem;color:#6f7789;font-size:.86rem;font-family:var(--font-mono);
   white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
@@ -285,7 +286,7 @@ python3 -m pip install -U yt-dlp   # 또는 이 방법</div>
     <div class="num">3</div>
     <div class="step-body">
       <h3>유튜브 주소를 붙여넣고 버튼 한 번</h3>
-      <p>유튜브 영상 주소를 복사해서 <b>입력칸에 붙여넣고</b>, <b>“추출”</b> 버튼을 눌러요. 잠깐 기다리면(자막 내려받기 · 챕터 나누기) 아래처럼 결과가 나와요.</p>
+      <p>유튜브 영상 주소를 복사해서 <b>입력칸에 붙여넣고</b>, <b>“추출”</b> 버튼을 눌러요. 잠깐 기다리면(자막 내려받기 · 챕터 나누기) 아래처럼 결과가 나오고, <b>요약 프롬프트와 영상 내용 전체가 자동으로 클립보드에 복사</b>돼요.</p>
 
       <div class="shot" role="img" aria-label="labyscribe 추출 후 화면 — 복사 버튼들과 파트 목록">
         <div class="bar"><i></i><i></i><i></i><span class="addr">127.0.0.1:8760</span></div>
@@ -294,12 +295,13 @@ python3 -m pip install -U yt-dlp   # 또는 이 방법</div>
           <p class="wmsub">유튜브 자막을 챕터별 Markdown 으로 추출 → 챗봇에 붙여넣어 요약</p>
           <div class="inrow">
             <div class="inbox" style="color:#e6e9ef;font-family:var(--font-mono)">https://youtu.be/dQw4w9WgXcQ</div>
+            <span class="ghost sel">분량: 전체 ▾</span>
             <button class="btn" type="button" tabindex="-1">추출</button>
           </div>
+          <p class="done">3개 파트 — 프롬프트+전체가 클립보드에 복사됐습니다. ChatGPT/Claude 채팅창에 붙여넣기(Ctrl+V) 하세요.</p>
           <div class="tools">
-            <span class="ghost sel">분량: 전체 ▾</span>
-            <button class="ghost hot" type="button" tabindex="-1"><span class="badge">1</span>요약 프롬프트 복사</button>
-            <button class="ghost hot" type="button" tabindex="-1"><span class="badge">2</span>전체 복사</button>
+            <button class="ghost hot" type="button" tabindex="-1"><span class="badge">1</span>프롬프트+전체 복사</button>
+            <button class="ghost" type="button" tabindex="-1">요약 프롬프트만 복사</button>
             <button class="ghost" type="button" tabindex="-1">저장 폴더 선택</button>
             <button class="ghost dis" type="button" tabindex="-1">이 폴더에 저장</button>
           </div>
@@ -311,7 +313,7 @@ python3 -m pip install -U yt-dlp   # 또는 이 방법</div>
           </ul>
         </div>
       </div>
-      <p class="shot-cap">▲ 추출이 끝난 화면. 노란 <b>①②</b> 표시가 다음 단계에서 누를 버튼이에요.</p>
+      <p class="shot-cap">▲ 추출이 끝난 화면. 초록 글씨가 나오면 <b>이미 복사가 끝난 것</b>이에요. 안 나오면 노란 <b>①</b> 버튼을 한 번 누르면 돼요.</p>
     </div>
   </div>
 
@@ -319,20 +321,24 @@ python3 -m pip install -U yt-dlp   # 또는 이 방법</div>
   <div class="step">
     <div class="num">4</div>
     <div class="step-body">
-      <h3>순서대로 두 번만 붙여넣으면 끝</h3>
-      <p><b>①</b> 화면의 <b>“요약 프롬프트 복사”</b>를 눌러요 → ChatGPT나 Claude 채팅창에 <b>붙여넣어요.</b> (아직 안 보내도 돼요.)</p>
-      <p><b>②</b> 이어서 <b>“전체 복사”</b>를 눌러요 → <b>같은 채팅에 이어 붙여넣고 전송</b>해요.</p>
+      <h3>붙여넣기 한 번이면 끝</h3>
+      <p>추출이 끝나면 <b>요약 지시문 + 영상 내용 전체</b>가 이미 클립보드에 들어 있어요. ChatGPT나 Claude 채팅창에 <b>붙여넣고(Ctrl+V · MAC OS는 Cmd+V) 전송</b>하면 끝이에요.</p>
       <p>그러면 AI가 영상 내용을 <b>핵심 요약 + 10분 구간별 상세 + 주요 용어</b> 형태로 정리해 줘요.</p>
 
       <div class="note tip">
+        <span class="lbl">팁 · 초록 “복사됐습니다” 글씨가 안 보이면</span>
+        <p>브라우저가 자동 복사를 막은 거예요(파이어폭스·사파리에서 종종 그래요). 그럴 땐 <b>“프롬프트+전체 복사”</b> 버튼을 한 번 누르면 똑같이 됩니다. 크롬·엣지는 대개 자동으로 돼요.</p>
+      </div>
+
+      <div class="note tip">
         <span class="lbl">팁 · 요약이 너무 길어서 다 읽기 힘들면</span>
-        <p>①을 누르기 <b>전에</b> 왼쪽의 <b>“분량”</b>을 바꿔요. <b>전체</b>는 지금처럼 영상 길이에 맞춰 자세히, <b>10분 읽기</b>는 10분쯤에 읽을 분량, <b>5분 읽기</b>는 5분쯤에 읽을 분량으로 정리해 줘요.</p>
-        <p>짧아지는 건 <b>“10분 구간별 상세”</b> 부분이고, 맨 앞의 <b>핵심 요약</b>과 맨 뒤의 <b>주요 용어</b>는 어느 쪽을 골라도 그대로예요. 분량을 고른 <b>뒤에</b> 프롬프트를 복사해야 반영되니, 이미 붙여넣었다면 분량을 바꿔 다시 복사한 다음 <b>새 채팅</b>에 붙여넣으세요.</p>
+        <p><b>“추출”을 누르기 전에</b> 주소칸 옆의 <b>“분량”</b>을 바꿔요. <b>전체</b>는 영상 길이에 맞춰 자세히, <b>10분 읽기</b>는 10분쯤에 읽을 분량, <b>5분 읽기</b>는 5분쯤에 읽을 분량으로 정리해 줘요.</p>
+        <p>짧아지는 건 <b>“10분 구간별 상세”</b> 부분이고, 맨 앞의 <b>핵심 요약</b>과 맨 뒤의 <b>주요 용어</b>는 어느 쪽을 골라도 그대로예요. 이미 붙여넣은 뒤에 분량을 바꿨다면, 분량을 고르고 <b>“프롬프트+전체 복사”</b>를 다시 누른 다음 <b>새 채팅</b>에 붙여넣으세요.</p>
       </div>
 
       <div class="note tip">
         <span class="lbl">팁 · 영상이 길어서 “파트”가 여러 개면</span>
-        <p>아주 긴 영상은 자막이 파트 1·2·3…으로 나뉘어요. “전체 복사”가 한 번에 안 될 만큼 길면, 각 줄의 <b>“복사”</b> 버튼으로 <b>파트 1 → 2 → 3 순서대로</b> 채팅에 이어 붙여넣으면 돼요. 순서만 지키면 됩니다.</p>
+        <p>아주 긴 영상은 자막이 파트 1·2·3…으로 나뉘어요. 한 번에 붙여넣기엔 너무 길다고 챗봇이 거부하면, <b>“요약 프롬프트만 복사”</b>로 지시문을 먼저 붙여넣고, 각 줄의 <b>“복사”</b> 버튼으로 <b>파트 1 → 2 → 3 순서대로</b> 같은 채팅에 이어 붙여넣으면 돼요. 순서만 지키면 됩니다.</p>
       </div>
     </div>
   </div>

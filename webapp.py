@@ -550,8 +550,8 @@ body { margin:0; background:var(--bg); color:var(--fg);
 main { max-width:760px; margin:0 auto; padding:2.5rem 1.25rem 4rem; }
 h1 { font-size:1.5rem; letter-spacing:-.02em; margin:0 0 .25rem; }
 .sub { color:var(--muted); margin:0 0 1.75rem; font-size:.9rem; }
-.row { display:flex; gap:.5rem; }
-input[type=text] { flex:1; padding:.7rem .85rem; background:var(--card);
+.row { display:flex; gap:.5rem; flex-wrap:wrap; }
+input[type=text] { flex:1; min-width:16rem; padding:.7rem .85rem; background:var(--card);
        border:1px solid var(--line); border-radius:9px; color:var(--fg); font-size:.95rem; }
 input[type=text]:focus { outline:none; border-color:var(--accent); }
 button { padding:.7rem 1rem; background:var(--accent); color:#0b1020; border:0;
@@ -581,17 +581,17 @@ li .bytes { color:var(--muted); font-size:.78rem; }
   <div class="row">
     <input type="text" id="url" placeholder="https://youtu.be/… 붙여넣기"
            autocomplete="off" spellcheck="false">
-    <button id="go">추출</button>
-  </div>
-  <div id="status"></div>
-  <div class="tools" id="tools" hidden>
     <select id="len" title="구간별 상세 요약의 분량 — 핵심 요약은 항상 그대로">
       <option value="full">분량: 전체</option>
       <option value="read10">분량: 10분 읽기</option>
       <option value="read5">분량: 5분 읽기</option>
     </select>
-    <button class="ghost" id="copyPrompt">요약 프롬프트 복사</button>
-    <button class="ghost" id="copyAll">전체 복사</button>
+    <button id="go">추출</button>
+  </div>
+  <div id="status"></div>
+  <div class="tools" id="tools" hidden>
+    <button class="ghost" id="copyAll">프롬프트+전체 복사</button>
+    <button class="ghost" id="copyPrompt">요약 프롬프트만 복사</button>
     <button class="ghost" id="pick">저장 폴더 선택</button>
     <button class="ghost" id="save" disabled>이 폴더에 저장</button>
   </div>
@@ -615,17 +615,28 @@ async function api(method, path, body) {
 
 function setStatus(msg) { $("status").textContent = msg; }   // textContent = XSS 안전
 
+// btn 있음 = 사용자 클릭(폴백 UI 허용) · btn 없음 = 자동 복사(조용히 false 반환)
 async function copyText(text, btn) {
   try { await navigator.clipboard.writeText(text); }
-  catch (e) {                                                // 권한거부 → 수동 복사 폴백
-    const ta = document.createElement("textarea");
+  catch (e) {
+    if (!btn) return false;                                  // 자동 = 호출자가 안내
+    const ta = document.createElement("textarea");           // 권한거부 → 수동 복사 폴백
     ta.value = text; document.body.appendChild(ta); ta.select();
     setStatus("클립보드 권한이 없어 텍스트를 선택했습니다. 직접 복사(Cmd/Ctrl+C)하세요.");
-    return;
+    return false;
   }
   if (btn) { const t = btn.textContent; btn.textContent = "복사됨 ✓";
              btn.classList.add("copied");
              setTimeout(() => { btn.textContent = t; btn.classList.remove("copied"); }, 1200); }
+  return true;
+}
+
+// 프롬프트 + 통합 transcript = 붙여넣기 1회. 실패는 throw(자동/수동 모두 원인 노출).
+async function copyPromptPlusAll(btn) {
+  const p = RESULT && RESULT.summary_prompts[$("len").value];
+  if (!p) throw new Error("요약 프롬프트를 찾을 수 없습니다. 다시 추출해 주세요.");
+  const d = await api("GET", "/api/transcript/" + RESULT.result_id);
+  return copyText(p + "\\n\\n" + d.markdown, btn);   // \\n = 파이썬 템플릿 통과용 이스케이프
 }
 
 function renderParts(parts) {
@@ -660,7 +671,15 @@ $("go").addEventListener("click", async () => {
     $("title").textContent = RESULT.title || "";
     renderParts(RESULT.parts);
     $("tools").hidden = false;
-    setStatus(RESULT.parts.length + "개 파트. 요약 프롬프트 복사 → 전체 복사(한 번에) 또는 파트별로 챗봇에 붙여넣으세요.");
+    const head = RESULT.parts.length + "개 파트 — ";
+    try {                       // 추출 직후 자동 복사(브라우저가 막으면 버튼으로 안내)
+      if (await copyPromptPlusAll(null)) {
+        setStatus(head + "프롬프트+전체가 클립보드에 복사됐습니다. ChatGPT/Claude 채팅창에 붙여넣기(Cmd/Ctrl+V) 하세요.");
+      } else {
+        setStatus(head + "브라우저가 자동 복사를 막았습니다. '프롬프트+전체 복사' 버튼을 눌러 주세요.");
+        $("copyAll").focus();
+      }
+    } catch (err) { setStatus(head + "자동 복사 실패: " + err.message); }
   } catch (e) { setStatus("실패: " + e.message); }
   finally { $("go").disabled = false; }
 });
@@ -674,10 +693,8 @@ $("copyPrompt").addEventListener("click", (e) => {
 
 $("copyAll").addEventListener("click", async (e) => {
   if (!RESULT) return;
-  try {                                                       // 통합 transcript 한 번에 복사
-    const d = await api("GET", "/api/transcript/" + RESULT.result_id);
-    copyText(d.markdown, e.currentTarget);
-  } catch (err) { setStatus("전체 복사 실패: " + err.message); }
+  try { await copyPromptPlusAll(e.currentTarget); }
+  catch (err) { setStatus("프롬프트+전체 복사 실패: " + err.message); }
 });
 
 $("pick").addEventListener("click", async () => {

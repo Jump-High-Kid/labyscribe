@@ -2,7 +2,7 @@
   "manifest_version": "0.3",
   "name": "labyscribe",
   "display_name": "labyscribe",
-  "version": "0.1.3",
+  "version": "0.1.4",
   "description": "로컬 MCP: 유튜브 자막을 결정론적으로 추출·페이징하고 요약 프롬프트 계약을 제공한다(요약은 호스트가 수행).",
   "author": {
     "name": "Jump-High-Kid"

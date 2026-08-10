@@ -497,6 +497,16 @@ def test_index_select_options_match_length_levels():
     assert html.count("<option") == len(webapp.LENGTH_LEVELS)
 
 
+def test_index_length_select_is_outside_hidden_tools():
+    """분량 select 는 추출 전(=tools hidden)에 골라야 자동 복사가 그 레벨로 나간다.
+    tools 안으로 되돌아가면 사용자는 항상 '전체'로 자동 복사된 뒤에야 레벨을 본다."""
+    html = webapp._render_index("n")
+    assert html.index('id="len"') < html.index('id="tools"')
+    # 템플릿이 일반 문자열이라 JS 안의 \n 은 반드시 이중 이스케이프 — 한 겹이면 실제 개행이
+    # 박혀 <script> 전체가 SyntaxError 로 죽는다(추출은 되는데 버튼이 전부 먹통).
+    assert r'"\n\n"' in html
+
+
 def test_summary_prompt_missing_file_raises(tmp_path, monkeypatch):
     """프롬프트 파일 부재(번들 누락)를 "" 로 삼키면 프론트가 빈 프롬프트를
     '복사됨 ✓' 로 위장한다(M4). 부재는 배포 결함이므로 fail-fast(raise)."""

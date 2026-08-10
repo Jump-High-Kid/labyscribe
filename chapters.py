@@ -12,6 +12,8 @@ cue 는 **start 시각이 속한 챕터**에 귀속(반개구간 `[start, end)`)
 from __future__ import annotations
 
 import math
+import re
+import unicodedata
 from bisect import bisect_right
 from dataclasses import dataclass
 from typing import NamedTuple, Optional
@@ -67,6 +69,27 @@ def _fmt_ts(sec: float) -> str:
     return "%02d:%02d:%02d" % (sec // 3600, (sec % 3600) // 60, sec % 60)
 
 
+_TS_PREFIX = re.compile(r"^\s*\d{1,2}:\d{2}(?::\d{2})?\s*")
+_LEAD_SEP = "-–—·|:"                     # 타임스탬프 뒤에 남는 구분자
+
+
+def clean_chapter_title(title) -> Optional[str]:
+    """챕터명 선두의 타임스탬프·이모지·구분자 제거 — 설명란 파싱 산물이라 헤더를 더럽힌다.
+
+    예: `12:56 👁️ 인간이 아닌 웹` → `인간이 아닌 웹`. 「」( 같은 의미 있는 문장부호는
+    보존(기호 So/Sk·이모지 변이자 Cf/Mn 만 제거). 순수함수 · raise 금지 · 빈 결과는
+    None(챕터無 폴백).
+    """
+    if not isinstance(title, str):
+        return None
+    t = _TS_PREFIX.sub("", title)
+    i = 0
+    while i < len(t) and (t[i].isspace() or t[i] in _LEAD_SEP
+                          or unicodedata.category(t[i]) in ("So", "Sk", "Cf", "Mn")):
+        i += 1
+    return t[i:].strip() or None
+
+
 def _valid_chapters(chapters_meta) -> list:
     """손상 항목 skip → [(start_time, title), ...] (원 순서 보존·raise 금지)."""
     if not isinstance(chapters_meta, (list, tuple)):
@@ -78,9 +101,8 @@ def _valid_chapters(chapters_meta) -> list:
         st = c.get("start_time")
         if not _finite(st):                     # inf/NaN/비수치/bool 배제(int() 예외·정렬 오염)
             continue
-        title = c.get("title")
         # _finite(st) 가 위에서 유한 수치 보장 → float() 안전(mypy 는 _finite 내로잉 못 봄).
-        out.append((float(st), title if isinstance(title, str) else None))  # type: ignore[arg-type]
+        out.append((float(st), clean_chapter_title(c.get("title"))))  # type: ignore[arg-type]
     return out
 
 
