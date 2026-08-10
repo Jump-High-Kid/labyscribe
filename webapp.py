@@ -74,8 +74,35 @@ def _resource_dir() -> str:
     return src
 
 
-@lru_cache(maxsize=1)
-def _summary_prompt() -> str:
+# 요약 분량 프리셋 — 프롬프트의 자리표시자에 치환. 제한 대상은 **'10분 구간별 상세'
+# 섹션만**(핵심 요약·개념 목록은 짧고 만족스러워 불변). 자수 근거 = 한국어 묵독 약 분당
+# 500자(요약문은 밀도가 높아 보수적) → 5분 2,500자 · 10분 5,000자.
+# 구간당 하한(300/500자)을 둔 이유: 긴 영상은 구간이 많아 균등배분만 하면 구간당 한두 줄로
+# 뭉개진다 — 하한 미만이면 구간을 병합해 시간해상도를 낮추고 문단 밀도를 지킨다.
+_PLACEHOLDER = "{{LENGTH_RULE}}"
+_BUDGET_RULE = (
+    "- **'10분 구간별 상세' 섹션만 한국어 %(budget)s자 내외(±10%%)로** 작성하십시오.\n"
+    "  1·3번 섹션(핵심 요약·주요 개념·용어)은 이 제한에 포함하지 않으며 평소대로 씁니다.\n"
+    "- 예산을 구간 수로 나눠 균등 배분하십시오. 구간당 %(floor)s자 미만이 되면 인접 구간을\n"
+    "  묶어 구간 수를 줄이고, 제목을 `[HH:MM:SS–HH:MM:SS]` 로 병합 표기하십시오.\n"
+    "- 각 구간은 %(shape)s.\n"
+    "- 자가 점검 3항목은 **출력하지 말고** 스스로 확인만 하십시오(위 산출 구조보다 이 지시가 우선).\n"
+    "- 분량을 줄여도 각 구간의 결론·핵심 수치·고유명사는 남기십시오. 뒤 구간이 앞 구간보다\n"
+    "  부실해지지 않게 하십시오."
+)
+_LENGTH_RULES = {
+    "full": "- 분량 제한 없음 — 각 구간을 영상 내용에 맞춰 충실히 다루십시오"
+            "(자가 점검 목록도 그대로 출력).",
+    "read10": _BUDGET_RULE % {"budget": "5,000", "floor": "500",
+                              "shape": "문단으로 정리하되 군더더기를 걷어내십시오"},
+    "read5": _BUDGET_RULE % {"budget": "2,500", "floor": "300",
+                             "shape": "문단 대신 **3~4개 불릿**으로 압축하십시오"},
+}
+LENGTH_LEVELS = tuple(_LENGTH_RULES)      # 프론트 select 와 응답 키의 SSOT
+
+
+@lru_cache(maxsize=len(_LENGTH_RULES) + 1)   # +1 = 인자 없는 preflight 호출(별도 캐시키)
+def _summary_prompt(level: str = "full") -> str:
     # 웹 전용 프롬프트 — v1 MCP 프롬프트(summarize_video.md)와 분리. 웹은 도구 없이
     # 파트를 순서대로 붙여넣는 흐름이라 get_transcript_part 등 MCP 도구를 지시하면 안 됨.
     # 부재/빈 파일 = 배포 결함(번들 누락). "" 반환은 프론트가 빈 프롬프트를 "복사됨 ✓"로
@@ -85,7 +112,14 @@ def _summary_prompt() -> str:
         text = f.read()
     if not text.strip():
         raise RuntimeError("웹 요약 프롬프트가 비어 있습니다: %s" % path)
-    return text
+    if _PLACEHOLDER not in text:              # 템플릿 훼손 = 분량 옵션 무력화(침묵 실패)
+        raise RuntimeError("요약 프롬프트에 %s 자리표시자가 없습니다: %s" % (_PLACEHOLDER, path))
+    return text.replace(_PLACEHOLDER, _LENGTH_RULES[level])
+
+
+def _summary_prompts() -> dict:
+    """레벨별 프롬프트 전량 — 프론트가 서버 왕복 없이 골라 복사(레벨이 경계를 안 넘음)."""
+    return {lv: _summary_prompt(lv) for lv in LENGTH_LEVELS}
 
 
 class AppState:
@@ -268,14 +302,13 @@ class Handler(http.server.BaseHTTPRequestHandler):
                                       "UNKNOWN_FAILURE"), result.message))
             return
         parts = result.parts or ()
-        rid = self._state.results.issue(result.meta.get("title"), parts,
-                                        _summary_prompt(), result.meta)
+        rid = self._state.results.issue(result.meta.get("title"), parts, result.meta)
         self._send_json(200, {
             "result_id": rid,
             "title": result.meta.get("title"),
             "parts": [{"part_no": p["part_no"], "chapter_no": p["chapter_no"],
                        "title": p["title"], "bytes": p["bytes"]} for p in parts],
-            "summary_prompt": _summary_prompt(),
+            "summary_prompts": _summary_prompts(),
             "status": "ok",
         })
 
@@ -524,6 +557,8 @@ input[type=text]:focus { outline:none; border-color:var(--accent); }
 button { padding:.7rem 1rem; background:var(--accent); color:#0b1020; border:0;
        border-radius:9px; font-weight:600; cursor:pointer; font-size:.9rem; }
 button.ghost { background:var(--card); color:var(--fg); border:1px solid var(--line); }
+select { padding:.7rem .85rem; background:var(--card); color:var(--fg);
+       border:1px solid var(--line); border-radius:9px; font-size:.9rem; cursor:pointer; }
 button:disabled { opacity:.5; cursor:default; }
 .tools { display:flex; gap:.5rem; flex-wrap:wrap; margin:1.25rem 0; }
 #status { color:var(--muted); font-size:.88rem; min-height:1.2em; margin:.75rem 0; }
@@ -550,6 +585,11 @@ li .bytes { color:var(--muted); font-size:.78rem; }
   </div>
   <div id="status"></div>
   <div class="tools" id="tools" hidden>
+    <select id="len" title="구간별 상세 요약의 분량 — 핵심 요약은 항상 그대로">
+      <option value="full">분량: 전체</option>
+      <option value="read10">분량: 10분 읽기</option>
+      <option value="read5">분량: 5분 읽기</option>
+    </select>
     <button class="ghost" id="copyPrompt">요약 프롬프트 복사</button>
     <button class="ghost" id="copyAll">전체 복사</button>
     <button class="ghost" id="pick">저장 폴더 선택</button>
@@ -626,7 +666,10 @@ $("go").addEventListener("click", async () => {
 });
 
 $("copyPrompt").addEventListener("click", (e) => {
-  if (RESULT) copyText(RESULT.summary_prompt, e.currentTarget);
+  if (!RESULT) return;
+  const p = RESULT.summary_prompts[$("len").value];   // 레벨별 프롬프트는 추출 시 전량 수신
+  if (!p) { setStatus("요약 프롬프트를 찾을 수 없습니다. 다시 추출해 주세요."); return; }
+  copyText(p, e.currentTarget);
 });
 
 $("copyAll").addEventListener("click", async (e) => {

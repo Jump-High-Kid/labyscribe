@@ -140,6 +140,7 @@ code{font-family:var(--font-mono);font-size:.86em;background:var(--accent-soft);
 .app .ghost{background:#181b22;color:#e6e9ef;border:1px solid #262b36;border-radius:9px;
   padding:.55rem .8rem;font-size:.82rem;font-weight:600;position:relative;font-family:inherit;}
 .app .ghost.dis{opacity:.45;}
+.app .ghost.sel{display:grid;place-items:center;}
 .app .tools{display:flex;gap:.5rem;flex-wrap:wrap;margin:1.1rem 0 .4rem;}
 .app .badge{position:absolute;top:-.55rem;right:-.55rem;width:1.25rem;height:1.25rem;border-radius:50%;
   background:#f0b429;color:#1a1205;font-size:.72rem;font-weight:800;display:grid;place-items:center;
@@ -296,6 +297,7 @@ python3 -m pip install -U yt-dlp   # 또는 이 방법</div>
             <button class="btn" type="button" tabindex="-1">추출</button>
           </div>
           <div class="tools">
+            <span class="ghost sel">분량: 전체 ▾</span>
             <button class="ghost hot" type="button" tabindex="-1"><span class="badge">1</span>요약 프롬프트 복사</button>
             <button class="ghost hot" type="button" tabindex="-1"><span class="badge">2</span>전체 복사</button>
             <button class="ghost" type="button" tabindex="-1">저장 폴더 선택</button>
@@ -321,6 +323,12 @@ python3 -m pip install -U yt-dlp   # 또는 이 방법</div>
       <p><b>①</b> 화면의 <b>“요약 프롬프트 복사”</b>를 눌러요 → ChatGPT나 Claude 채팅창에 <b>붙여넣어요.</b> (아직 안 보내도 돼요.)</p>
       <p><b>②</b> 이어서 <b>“전체 복사”</b>를 눌러요 → <b>같은 채팅에 이어 붙여넣고 전송</b>해요.</p>
       <p>그러면 AI가 영상 내용을 <b>핵심 요약 + 10분 구간별 상세 + 주요 용어</b> 형태로 정리해 줘요.</p>
+
+      <div class="note tip">
+        <span class="lbl">팁 · 요약이 너무 길어서 다 읽기 힘들면</span>
+        <p>①을 누르기 <b>전에</b> 왼쪽의 <b>“분량”</b>을 바꿔요. <b>전체</b>는 지금처럼 영상 길이에 맞춰 자세히, <b>10분 읽기</b>는 10분쯤에 읽을 분량, <b>5분 읽기</b>는 5분쯤에 읽을 분량으로 정리해 줘요.</p>
+        <p>짧아지는 건 <b>“10분 구간별 상세”</b> 부분이고, 맨 앞의 <b>핵심 요약</b>과 맨 뒤의 <b>주요 용어</b>는 어느 쪽을 골라도 그대로예요. 분량을 고른 <b>뒤에</b> 프롬프트를 복사해야 반영되니, 이미 붙여넣었다면 분량을 바꿔 다시 복사한 다음 <b>새 채팅</b>에 붙여넣으세요.</p>
+      </div>
 
       <div class="note tip">
         <span class="lbl">팁 · 영상이 길어서 “파트”가 여러 개면</span>

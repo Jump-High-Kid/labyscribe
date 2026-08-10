@@ -9,10 +9,9 @@ import results
 def test_result_issue_get_roundtrip():
     reg = results.ResultRegistry()
     parts = ({"part_no": 1, "chapter_no": 0, "title": None, "markdown": "m", "bytes": 1},)
-    rid = reg.issue("T", parts, "PROMPT", {"title": "T", "uploader": "U"})
+    rid = reg.issue("T", parts, {"title": "T", "uploader": "U"})
     e = reg.get(rid)
     assert e is not None and e.title == "T" and e.parts == parts
-    assert e.summary_prompt == "PROMPT"
 
 
 def test_result_missing_id_none():
@@ -23,7 +22,7 @@ def test_result_missing_id_none():
 
 def test_result_video_meta_allowlist_projection():
     reg = results.ResultRegistry()
-    rid = reg.issue("T", (), "P", {"title": "T", "secret_path": "/abs/x", "cookies": "c"})
+    rid = reg.issue("T", (), {"title": "T", "secret_path": "/abs/x", "cookies": "c"})
     e = reg.get(rid)
     assert "secret_path" not in e.video_meta and "cookies" not in e.video_meta
     assert e.video_meta["title"] == "T"
@@ -31,16 +30,16 @@ def test_result_video_meta_allowlist_projection():
 
 def test_result_lru_eviction():
     reg = results.ResultRegistry(max_results=2)
-    a = reg.issue("A", (), "", {})
-    b = reg.issue("B", (), "", {})
-    c = reg.issue("C", (), "", {})       # a 축출
+    a = reg.issue("A", (), {})
+    b = reg.issue("B", (), {})
+    c = reg.issue("C", (), {})       # a 축출
     assert reg.get(a) is None
     assert reg.get(b) is not None and reg.get(c) is not None
 
 
 def test_result_id_unpredictable_unique():
     reg = results.ResultRegistry()
-    ids = {reg.issue("t", (), "", {}) for _ in range(20)}
+    ids = {reg.issue("t", (), {}) for _ in range(20)}
     assert len(ids) == 20                # 충돌 0
     assert all(len(i) > 20 for i in ids)  # 난수 길이
 

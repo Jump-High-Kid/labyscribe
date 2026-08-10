@@ -33,7 +33,6 @@ class ResultEntry:
     result_id: str
     title: Optional[str]
     parts: tuple            # tuple[dict] — {part_no,chapter_no,title,markdown,bytes}
-    summary_prompt: str
     video_meta: dict        # allowlist 투영(가변 참조 유출 0)
 
 
@@ -52,10 +51,10 @@ class ResultRegistry:
         self._d: "OrderedDict[str, ResultEntry]" = OrderedDict()
         self._lock = threading.Lock()
 
-    def issue(self, title, parts, summary_prompt, video_meta) -> str:
+    def issue(self, title, parts, video_meta) -> str:
         rid = secrets.token_urlsafe(32)
         # 파트 dict 얕은 복사 → 호출자 원본 변조 격리(값은 str/int/None 불변).
-        entry = ResultEntry(rid, title, tuple(dict(p) for p in parts), summary_prompt,
+        entry = ResultEntry(rid, title, tuple(dict(p) for p in parts),
                             _project_video_meta(video_meta or {}))
         with self._lock:
             self._d[rid] = entry

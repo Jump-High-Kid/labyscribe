@@ -5,7 +5,9 @@ description = "Open-source local MCP share edition of a personal video-summary s
 # mcp SDK 가 3.10+ 요구 → Phase 2(MCP 서버)부터 하한 상향. extract.py CLI 자체는 3.9 호환.
 requires-python = ">=3.10"
 license = { text = "MIT" }
-dependencies = ["mcp>=1.28"]
+# 상한 필수 — mcp 2.0 이 `mcp.server.fastmcp` 를 제거해 server.py 가 import 단계에서 죽는다
+# (CI 가 상한 없이 2.0.0 을 끌어와 win .mcpb 빌드 스모크 RED). 2.0 이식은 별도 작업.
+dependencies = ["mcp>=1.28,<2"]
 
 [project.optional-dependencies]
 dev = ["pytest", "pytest-cov", "ruff", "mypy"]
@@ -23,6 +25,12 @@ markers = [
 target-version = "py310"
 # lint 기본룰(E4·E7·E9·F) 사용 — E501(라인 길이)은 미선택(black 미채택·기존 장문 라인 보존).
 # 커버리지·타입은 pytest-cov·mypy 분담. (line-length 는 미설정 — 강제 게이트 없음을 명시)
+
+[tool.ruff.lint]
+# 룰셋을 **명시** — 도구 기본값에 의존하면 ruff 업그레이드가 게이트를 바꾼다.
+# (0.16 이 기본 룰셋을 확장해 무관한 기존 코드 180건이 CI 에서 적발됨. 대량 리포맷은
+#  비외과적이라 미채택 — 위 주석이 밝힌 원래 의도를 버전 독립적으로 고정한다.)
+select = ["E4", "E7", "E9", "F"]
 
 [tool.ruff.lint.per-file-ignores]
 # 테스트 람다 관례 `lambda u, l, o:`(u=url·l=lang·o=out — run_extract 3-인자 대응).
