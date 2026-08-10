@@ -5,7 +5,9 @@ description = "Open-source local MCP share edition of a personal video-summary s
 # mcp SDK 가 3.10+ 요구 → Phase 2(MCP 서버)부터 하한 상향. extract.py CLI 자체는 3.9 호환.
 requires-python = ">=3.10"
 license = { text = "MIT" }
-dependencies = ["mcp>=1.28"]
+# 상한 필수 — mcp 2.0 이 `mcp.server.fastmcp` 를 제거해 server.py 가 import 단계에서 죽는다
+# (CI 가 상한 없이 2.0.0 을 끌어와 win .mcpb 빌드 스모크 RED). 2.0 이식은 별도 작업.
+dependencies = ["mcp>=1.28,<2"]
 
 [project.optional-dependencies]
 dev = ["pytest", "pytest-cov", "ruff", "mypy"]
