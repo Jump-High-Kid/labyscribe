@@ -181,3 +181,23 @@ def test_part_is_frozen():
     except Exception:
         raised = True
     assert raised
+
+
+# ── 챕터명 정제(설명란 파싱 산물) ──────────────────────────
+
+def test_clean_chapter_title_strips_timestamp_and_emoji():
+    """유튜브 설명란에서 온 챕터명은 `12:56 👁️ 제목` 처럼 타임스탬프·이모지를 달고 온다."""
+    c = chapters.clean_chapter_title
+    assert c("12:56 👁️ 인간이 아닌 AI를 위한 웹은 어떻게 생겼을까?") == \
+        "인간이 아닌 AI를 위한 웹은 어떻게 생겼을까?"
+    assert c("00:02:30 - WebMCP 소개") == "WebMCP 소개"
+    assert c("정상 제목") == "정상 제목"                 # 멀쩡한 제목은 불변
+    assert c("「도입」 (1부)") == "「도입」 (1부)"        # 의미 있는 문장부호는 보존
+    assert c("🎬") is None                               # 전부 제거 = 챕터無 폴백
+    assert c(None) is None and c(123) is None            # 비문자열 = raise 금지
+
+
+def test_split_uses_cleaned_chapter_title():
+    """정제는 split 경로에 실제로 걸려야 한다(헤더에 타임스탬프가 새면 무의미)."""
+    parts = split([(0.0, "a")], [{"start_time": 0, "title": "12:56 👁️ 제목"}])
+    assert parts[0].title == "제목"

@@ -36,7 +36,9 @@
 ## 웹 UI (v2 · Windows 단독 실행파일 · Claude Desktop 불요)
 
 Claude Desktop 없이 **브라우저에서 바로** 쓰는 로컬 웹 UI다. 추출·챕터 분할·Markdown 파트를
-로컬에서 만들고, 요약 프롬프트를 복사해 원하는 호스트(웹 Claude·ChatGPT 등)에 붙여넣는다.
+로컬에서 만들고, **추출이 끝나면 요약 프롬프트 + 전체 내용이 자동으로 클립보드에 복사**되어
+원하는 호스트(웹 Claude·ChatGPT 등)에 한 번만 붙여넣으면 된다.
+(브라우저가 자동 복사를 막으면 `프롬프트+전체 복사` 버튼으로 같은 결과를 얻는다.)
 
 1. GitHub 릴리스에서 **`labyscribe-webui-win.zip`** 을 받는다.
    (릴리스가 없으면 Actions `build` 워크플로의 artifact `labyscribe-webui-win` 에서 받는다.)
