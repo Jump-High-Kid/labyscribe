@@ -24,6 +24,12 @@ target-version = "py310"
 # lint 기본룰(E4·E7·E9·F) 사용 — E501(라인 길이)은 미선택(black 미채택·기존 장문 라인 보존).
 # 커버리지·타입은 pytest-cov·mypy 분담. (line-length 는 미설정 — 강제 게이트 없음을 명시)
 
+[tool.ruff.lint]
+# 룰셋을 **명시** — 도구 기본값에 의존하면 ruff 업그레이드가 게이트를 바꾼다.
+# (0.16 이 기본 룰셋을 확장해 무관한 기존 코드 180건이 CI 에서 적발됨. 대량 리포맷은
+#  비외과적이라 미채택 — 위 주석이 밝힌 원래 의도를 버전 독립적으로 고정한다.)
+select = ["E4", "E7", "E9", "F"]
+
 [tool.ruff.lint.per-file-ignores]
 # 테스트 람다 관례 `lambda u, l, o:`(u=url·l=lang·o=out — run_extract 3-인자 대응).
 # 소스는 E741 강제(모호변수 금지), 테스트의 이 확립된 관례만 예외. 다른 규칙은 tests 도 적용.
