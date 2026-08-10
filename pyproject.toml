@@ -1,6 +1,6 @@
 [project]
 name = "labyscribe"
-version = "0.1.2"
+version = "0.1.3"
 description = "Open-source local MCP share edition of a personal video-summary skill — extraction core + MCP stdio server."
 # mcp SDK 가 3.10+ 요구 → Phase 2(MCP 서버)부터 하한 상향. extract.py CLI 자체는 3.9 호환.
 requires-python = ">=3.10"
