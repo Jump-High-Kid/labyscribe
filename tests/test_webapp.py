@@ -183,7 +183,7 @@ def test_save_invalid_capability_404(server):
 
 
 def test_save_to_capability_suffix(tmp_path):
-    entry = results.ResultEntry("r", "MyVid", ({"markdown": "body"},), "P", {})
+    entry = results.ResultEntry("r", "MyVid", ({"markdown": "body"},), {})
     cap = str(tmp_path / "vault")
     os.makedirs(cap)
     n1 = webapp._save_to_capability(entry, cap)
@@ -197,7 +197,7 @@ def test_save_to_capability_suffix(tmp_path):
 
 def test_save_preserves_picked_folder_permissions(tmp_path):
     """저장이 사용자가 고른 폴더의 Unix 권한을 강제 축소하지 않는다(CRITICAL)."""
-    entry = results.ResultEntry("r", "MyVid", ({"markdown": "body"},), "P", {})
+    entry = results.ResultEntry("r", "MyVid", ({"markdown": "body"},), {})
     cap = str(tmp_path / "shared")
     os.makedirs(cap)
     os.chmod(cap, 0o755)
@@ -207,7 +207,7 @@ def test_save_preserves_picked_folder_permissions(tmp_path):
 
 def test_save_retries_past_same_name_plain_file(tmp_path):
     """저장폴더에 동명 '파일'이 있어도 접미로 재시도해 저장한다(HIGH·ENOTDIR)."""
-    entry = results.ResultEntry("r", "MyVid", ({"markdown": "body"},), "P", {})
+    entry = results.ResultEntry("r", "MyVid", ({"markdown": "body"},), {})
     cap = str(tmp_path / "vault")
     os.makedirs(cap)
     open(os.path.join(cap, "MyVid"), "w").close()        # 동명 일반파일(디렉토리 아님)
@@ -474,6 +474,27 @@ def test_web_prompt_omits_mcp_tool_references():
     assert prompt.strip()                            # 프롬프트 실재
     for tok in ("get_transcript_part", "extract_transcript", "transcript_handle"):
         assert tok not in prompt                     # 웹에 없는 도구 미지시
+
+
+def test_length_levels_substitute_placeholder_and_budgets():
+    """분량 프리셋: 자리표시자가 전 레벨에서 치환되고, 예산 자수가 실제로 들어간다.
+    치환 누락은 프롬프트에 `{{...}}` 리터럴이 남는 침묵 실패라 챗봇이 무시한다."""
+    for lv in webapp.LENGTH_LEVELS:
+        webapp._summary_prompt.cache_clear()
+        p = webapp._summary_prompt(lv)
+        assert "{{" not in p, "%s 레벨에 미치환 자리표시자" % lv
+    assert "5,000자" in webapp._summary_prompt("read10")
+    assert "2,500자" in webapp._summary_prompt("read5")
+    assert "자 내외" not in webapp._summary_prompt("full")   # 기본 = 제한 없음(현행 유지)
+    webapp._summary_prompt.cache_clear()
+
+
+def test_index_select_options_match_length_levels():
+    """프론트 select 값과 서버 레벨 키의 SSOT 일치 — 어긋나면 '복사' 가 조용히 실패한다."""
+    html = webapp._render_index("n")
+    for lv in webapp.LENGTH_LEVELS:
+        assert 'value="%s"' % lv in html
+    assert html.count("<option") == len(webapp.LENGTH_LEVELS)
 
 
 def test_summary_prompt_missing_file_raises(tmp_path, monkeypatch):
