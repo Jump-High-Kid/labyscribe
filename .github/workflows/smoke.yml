@@ -74,3 +74,14 @@ jobs:
           if [ "$inconclusive" -gt 0 ]; then
             echo "inconclusive 만 발생(YouTube-side·회귀 아님) — neutral 통과."
           fi
+
+  # 60일 무커밋 시 GitHub 가 schedule 워크플로를 자동 비활성화 → 매주 enable API 를 호출해 카운트 리셋.
+  # actions:write 는 이 잡에만 부여(smoke 잡은 contents:read 유지 · 최소권한).
+  keepalive:
+    runs-on: ubuntu-latest
+    permissions:
+      actions: write
+    steps:
+      - run: gh api -X PUT "repos/$GITHUB_REPOSITORY/actions/workflows/smoke.yml/enable"
+        env:
+          GH_TOKEN: ${{ github.token }}
