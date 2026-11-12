@@ -13,7 +13,7 @@ HERE="$(cd "$(dirname "$0")" && pwd)"
 
 # ── 고정값 (보안 재릴리스 시에만 수동 갱신 — 자동 업데이트 금지) ──
 TARGET_OS="${TARGET_OS:-macos}"
-YTDLP_VERSION="2026.07.04"
+YTDLP_VERSION="2026.10.26"
 YTDLP_KEY_FPR="AC0CBBE6848D6A873464AF4E57CF65933B5A7581"   # Simon Sawicki (yt-dlp signing key)
 
 # OS별 자산·SHA256·출력파일명 (SHA256 = 공식 SHA2-256SUMS 확인·GPG 서명 목록)
@@ -21,13 +21,13 @@ case "$TARGET_OS" in
   macos)
     YTDLP_ASSET="yt-dlp_macos"
     YTDLP_OUTBIN="yt-dlp"
-    YTDLP_SHA256="498bd0dae17855c599d371d68ec5bafc439a9d8640e838be25c765a9792f261b"
+    YTDLP_SHA256="0f922c15ccc0b83eefa1c8bc9104e434318c4bf16e408e1ee93b7745a6efe0aa"
     CHECK_UNIVERSAL2=1
     SHA_CMD="shasum -a 256" ;;   # macOS(BSD) = shasum(sha256sum 부재)
   windows)
     YTDLP_ASSET="yt-dlp.exe"
     YTDLP_OUTBIN="yt-dlp.exe"
-    YTDLP_SHA256="52fe3c26dcf71fbdc85b528589020bb0b8e383155cfa81b64dd447bbe35e24b8"
+    YTDLP_SHA256="f5389d3698ecde4ef06f4e6b1ce0294fe9ac1396228c8990b8d3416d6d177a7d"
     CHECK_UNIVERSAL2=0
     SHA_CMD="sha256sum" ;;   # windows git bash = coreutils sha256sum(shasum 부재 — CI 실측)
   *)
