@@ -12,6 +12,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import platform
 import re
 import shutil
 import subprocess
@@ -644,10 +645,20 @@ def run_extract(url: str, lang: Optional[str], output_root: str, *,
         sub_path, status = download_sub(url, tag, temp, vid, fmt="vtt")
         if status == "failed":
             meta["status"] = "download-failed"
-            return ExtractResult(
-                EXIT_DOWNLOAD_FAILED,
-                "DOWNLOAD_FAILED 자막 트랙 존재·다운로드 실패(rate-limit/네트워크). "
-                "잠시 후 재시도 요망. id=%s" % vid, meta, None)
+            msg = ("DOWNLOAD_FAILED 자막 트랙은 있으나 자동 재시도 후에도 다운로드 실패"
+                   "(rate-limit 429/네트워크). 429 제한은 몇 시간 지속될 수 있으니 나중에 "
+                   "다시 시도하세요. ")
+            # mlx-whisper 는 Apple Silicon 전용 → 그 외 OS 엔 안내 생략. 안내만(STT 실행 0 —
+            # 'STT 불필요' 원칙 유지). ./ 접두 = '-'로 시작하는 id 의 옵션 오인 차단.
+            # shortcut: Rosetta(x86_64) 파이썬이면 Apple Silicon 이어도 생략, 요청 시 sysctl 판별로 확장
+            if sys.platform == "darwin" and platform.machine() == "arm64":
+                msg += ("급하면 이 맥에서 음성을 직접 받아쓸 수 있습니다"
+                        "(ffmpeg·uv 필요 · 첫 실행 시 모델 약 1.6GB 다운로드): "
+                        "yt-dlp -x --audio-format mp3 -o './%s.%%(ext)s' "
+                        "'https://www.youtube.com/watch?v=%s' → uvx --from mlx-whisper "
+                        "mlx_whisper ./%s.mp3 --model mlx-community/whisper-large-v3-turbo "
+                        "--output-format txt (고유명사 오인식 가능). " % (vid, vid, vid))
+            return ExtractResult(EXIT_DOWNLOAD_FAILED, msg + "id=%s" % vid, meta, None)
         if status == "no_file" or not sub_path:
             meta["status"] = "no-subtitle"
             return ExtractResult(

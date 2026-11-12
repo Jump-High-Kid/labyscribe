@@ -82,12 +82,24 @@ def test_network_info_failure_returns_3(monkeypatch, tmp_path, stderr):
 
 # ── main 분류: 429 지속(자막 다운로드 재시도 소진) → 3 ────────────
 
-def test_download_persistent_429_returns_3(monkeypatch, tmp_path):
+@pytest.mark.parametrize("plat, machine, mlx_hint", [
+    ("darwin", "arm64", True),      # Apple Silicon 맥만 mlx-whisper 안내
+    ("darwin", "x86_64", False),
+    ("win32", "AMD64", False),
+])
+def test_download_persistent_429_returns_3(monkeypatch, tmp_path, capsys,
+                                           plat, machine, mlx_hint):
     def fake_dl(url, tag, outdir, vid, fmt="vtt", retries=3):
         return None, "failed"
+    monkeypatch.setattr(E.sys, "platform", plat)
+    monkeypatch.setattr(E.platform, "machine", lambda: machine)
     code, out = _run_main(monkeypatch, tmp_path,
                           info=_info(subs={"en": [{}]}), dl=fake_dl)
     assert code == E.EXIT_DOWNLOAD_FAILED
+    # 재시도 소진 안내 = 지속 가능성(전 OS) + mlx-whisper 수동 받아쓰기 경로(실행은 안 함)
+    msg = capsys.readouterr().out
+    assert "몇 시간" in msg
+    assert ("mlx_whisper" in msg) is mlx_hint
     # 실패경로 디스크 흔적 0 · temp 정리(AC-11)
     assert not glob.glob(os.path.join(out, "**", "transcript.txt"), recursive=True)
 
